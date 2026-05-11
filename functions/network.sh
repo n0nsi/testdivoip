@@ -35,23 +35,27 @@ get_ping_stats_raw() {
     loss=$(echo "$output" | grep -oP '[0-9.]+(?=% packet loss)' | head -1)
     loss=${loss:-0}
     
-    # Try GNU format: "min/avg/max/stddev"
+    # Try GNU format: "rtt min/avg/max/mdev = x/x/x/x ms" (common on Linux)
     local avg min max stddev
-    if echo "$output" | grep -q 'rtt min/avg/max/stddev'; then
+    if echo "$output" | grep -qiE 'rtt .*min/avg/max'; then
         local stats_line
-        stats_line=$(echo "$output" | grep 'rtt min/avg/max/stddev' | tail -1)
-        min=$(echo "$stats_line" | grep -oP 'min/avg/max/stddev = \K[0-9.]+')
-        avg=$(echo "$stats_line" | grep -oP 'min/avg/max/stddev = [0-9.]+/\K[0-9.]+')
-        max=$(echo "$stats_line" | grep -oP 'avg/max/stddev = [0-9.]+/[0-9.]+/\K[0-9.]+')
-        stddev=$(echo "$stats_line" | grep -oP 'max/stddev = [0-9.]+/\K[0-9.]+')
+        stats_line=$(echo "$output" | grep -iE 'rtt .*min/avg/max' | tail -1)
+        # Extract the part after '=' and split by '/'
+        # Example: "rtt min/avg/max/mdev = 11.830/13.355/14.082/0.658 ms"
+        local rhs
+        rhs=$(echo "$stats_line" | sed -E 's/.*= *//i' | sed -E 's/ ms$//i')
+        min=$(echo "$rhs" | awk -F'/' '{print $1}')
+        avg=$(echo "$rhs" | awk -F'/' '{print $2}')
+        max=$(echo "$rhs" | awk -F'/' '{print $3}')
+        stddev=$(echo "$rhs" | awk -F'/' '{print $4}')
     else
         # Fallback: BSD/old format with "avg=" syntax
         local last_line
         last_line=$(echo "$output" | tail -n 1)
-        avg=$(echo "$last_line" | grep -oP 'avg=\K[0-9.]+')
-        min=$(echo "$last_line" | grep -oP 'min=\K[0-9.]+')
-        max=$(echo "$last_line" | grep -oP 'max=\K[0-9.]+')
-        stddev=$(echo "$last_line" | grep -oP 'stddev=\K[0-9.]+')
+        avg=$(echo "$last_line" | grep -oP 'avg=\K[0-9.]+' || true)
+        min=$(echo "$last_line" | grep -oP 'min=\K[0-9.]+' || true)
+        max=$(echo "$last_line" | grep -oP 'max=\K[0-9.]+' || true)
+        stddev=$(echo "$last_line" | grep -oP 'stddev=\K[0-9.]+' || true)
     fi
     
     # Ensure values are set
