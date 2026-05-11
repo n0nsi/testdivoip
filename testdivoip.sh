@@ -27,29 +27,49 @@
 set -o pipefail
 trap 'trap_error $LINENO $BASH_LINENO' ERR
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FUNCTIONS_DIR="${SCRIPT_DIR}/functions"
-CONFIG_DIR="${SCRIPT_DIR}/config"
-REPORTS_DIR="${SCRIPT_DIR}/reports"
-LOGS_DIR="${SCRIPT_DIR}/logs"
-TEMP_DIR="${SCRIPT_DIR}/temp"
+# Resolve the real script path so symlinks and alternate launch locations work.
+resolve_script_path() {
+    local source_path="${BASH_SOURCE[0]}"
+    while [ -L "$source_path" ]; do
+        local source_dir
+        source_dir="$(cd "$(dirname "$source_path")" && pwd -P)"
+        source_path="$(readlink "$source_path")"
+        [[ "$source_path" != /* ]] && source_path="$source_dir/$source_path"
+    done
+    printf '%s\n' "$source_path"
+}
+
+SCRIPT_PATH="$(resolve_script_path)"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)"
+PROJECT_ROOT="$SCRIPT_DIR"
+FUNCTIONS_DIR="${PROJECT_ROOT}/functions"
+CONFIG_DIR="${PROJECT_ROOT}/config"
+REPORTS_DIR="${PROJECT_ROOT}/reports"
+LOGS_DIR="${PROJECT_ROOT}/logs"
+TEMP_DIR="${PROJECT_ROOT}/temp"
+
+source_required() {
+    local module_file="$1"
+    if [ ! -f "$module_file" ]; then
+        printf 'Fatal: required module missing: %s\n' "$module_file" >&2
+        exit 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "$module_file" || {
+        printf 'Fatal: failed to load module: %s\n' "$module_file" >&2
+        exit 1
+    }
+}
 
 # Load all functions
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/colors.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/logging.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/network.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/analysis.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/reporting.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/utils.sh"
-# shellcheck source=/dev/null
-source "${FUNCTIONS_DIR}/presentation.sh"
+source_required "${FUNCTIONS_DIR}/colors.sh"
+source_required "${FUNCTIONS_DIR}/logging.sh"
+source_required "${FUNCTIONS_DIR}/network.sh"
+source_required "${FUNCTIONS_DIR}/analysis.sh"
+source_required "${FUNCTIONS_DIR}/reporting.sh"
+source_required "${FUNCTIONS_DIR}/utils.sh"
+source_required "${FUNCTIONS_DIR}/presentation.sh"
 
 # Global variables
 DEBUG="${DEBUG:-0}"

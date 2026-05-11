@@ -7,12 +7,26 @@
 # All colors, formatting, user prompts here
 ################################################################################
 
-# Source colors for use in this layer
-# shellcheck source=./colors.sh
-source "${SCRIPT_DIR}/colors.sh" || {
-    echo "Error: colors.sh not found" >&2
-    return 1
+# Resolve this module and load sibling dependencies with absolute paths.
+PRESENTATION_SOURCE="${BASH_SOURCE[0]}"
+PRESENTATION_DIR="$(cd "$(dirname "$PRESENTATION_SOURCE")" && pwd -P)"
+PROJECT_ROOT="$(cd "${PRESENTATION_DIR}/.." && pwd -P)"
+
+source_required() {
+    local module_file="$1"
+    if [ ! -f "$module_file" ]; then
+        printf 'Fatal: required module missing: %s\n' "$module_file" >&2
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "$module_file" || {
+        printf 'Fatal: failed to load module: %s\n' "$module_file" >&2
+        return 1
+    }
 }
+
+source_required "${PRESENTATION_DIR}/colors.sh" || return 1
 
 ################################################################################
 # SUCCESS/ERROR/INFO MESSAGES
