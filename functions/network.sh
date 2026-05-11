@@ -13,6 +13,7 @@
 
 # get_ping_stats_raw: returns "avg loss min max stddev" separated by space
 # NO stdout contamination, errors to stderr
+# Handles multiple ping output formats (GNU, BSD, busybox)
 get_ping_stats_raw() {
     local target="$1"
     local count="${2:-10}"
@@ -29,24 +30,54 @@ get_ping_stats_raw() {
         return 1
     }
     
-    # Extract stats from last line
-    local last_line
-    last_line=$(echo "$output" | tail -n 1)
-    
-    local avg min max stddev loss
-    avg=$(echo "$last_line" | grep -oP 'avg=\K[0-9.]+')
-    min=$(echo "$last_line" | grep -oP 'min=\K[0-9.]+')
-    max=$(echo "$last_line" | grep -oP 'max=\K[0-9.]+')
-    stddev=$(echo "$last_line" | grep -oP 'stddev=\K[0-9.]+')
+    # Extract loss first (consistent across formats)
+    local loss
     loss=$(echo "$output" | grep -oP '[0-9.]+(?=% packet loss)' | head -1)
+    loss=${loss:-0}
+    
+    # Try GNU format: "min/avg/max/stddev"
+    local avg min max stddev
+    if echo "$output" | grep -q 'rtt min/avg/max/stddev'; then
+        local stats_line
+        stats_line=$(echo "$output" | grep 'rtt min/avg/max/stddev' | tail -1)
+        min=$(echo "$stats_line" | grep -oP 'min/avg/max/stddev = \K[0-9.]+')
+        avg=$(echo "$stats_line" | grep -oP 'min/avg/max/stddev = [0-9.]+/\K[0-9.]+')
+        max=$(echo "$stats_line" | grep -oP 'avg/max/stddev = [0-9.]+/[0-9.]+/\K[0-9.]+')
+        stddev=$(echo "$stats_line" | grep -oP 'max/stddev = [0-9.]+/\K[0-9.]+')
+    else
+        # Fallback: BSD/old format with "avg=" syntax
+        local last_line
+        last_line=$(echo "$output" | tail -n 1)
+        avg=$(echo "$last_line" | grep -oP 'avg=\K[0-9.]+')
+        min=$(echo "$last_line" | grep -oP 'min=\K[0-9.]+')
+        max=$(echo "$last_line" | grep -oP 'max=\K[0-9.]+')
+        stddev=$(echo "$last_line" | grep -oP 'stddev=\K[0-9.]+')
+    fi
+    
+    # Ensure values are set
+    avg=${avg:-0}
+    min=${min:-0}
+    max=${max:-0}
+    stddev=${stddev:-0}
+    
+    # VALIDATION: RTT=0 is suspicious on non-localhost; round-trip minimum is ~0.1ms
+    # If avg < 0.1 and not localhost, it's probably parsing error
+    if (( $(echo "$avg < 0.1 && $target != '127.0.0.1'" | bc -l 2>/dev/null) )); then
+        # Try to recover from parsing failure
+        # Return raw ping output for manual inspection
+        echo "" >&2
+        echo "Warning: Suspicious RTT value ($avg ms) for non-localhost target. Ping output may have unexpected format." >&2
+        echo "$output" | tail -5 >&2
+        return 1
+    fi
     
     # Output only raw numbers, space-separated
     printf '%s %s %s %s %s\n' \
-        "${avg:-0}" \
-        "${loss:-0}" \
-        "${min:-0}" \
-        "${max:-0}" \
-        "${stddev:-0}"
+        "$avg" \
+        "$loss" \
+        "$min" \
+        "$max" \
+        "$stddev"
 }
 
 # Aliases for backward compatibility, but cleaner

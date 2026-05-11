@@ -67,6 +67,7 @@ source_required "${FUNCTIONS_DIR}/colors.sh"
 source_required "${FUNCTIONS_DIR}/logging.sh"
 source_required "${FUNCTIONS_DIR}/network.sh"
 source_required "${FUNCTIONS_DIR}/analysis.sh"
+source_required "${FUNCTIONS_DIR}/carrier_intelligence.sh"
 source_required "${FUNCTIONS_DIR}/reporting.sh"
 source_required "${FUNCTIONS_DIR}/utils.sh"
 source_required "${FUNCTIONS_DIR}/presentation.sh"
@@ -402,23 +403,61 @@ run_complete_analysis() {
     mtr_metrics=$(parse_mtr_raw "$mtr_output")
     jitter=$(echo "$mtr_metrics" | awk '{print $4}')  # Best value as jitter proxy
     
-    # Calculate VoIP Score
-    ui_print_subheader "VoIP Quality Score Calculation"
-    local score
-    score=$(calculate_voip_score "$latency" "$jitter" "$loss" "$hops" "$asn_suspicious" "$international")
+    # === RISK ASSESSMENT ENGINE ===
+    ui_print_subheader "VoIP Quality Assessment"
     
-    if ! is_number "$score"; then
-        ui_print_error "Score calculation failed"
-        return 1
+    # Get comprehensive risk assessment
+    local risk_assessment
+    risk_assessment=$(assess_route_risk "$traceroute_output" "$mtr_output" "$latency" "$loss" "$hops")
+    
+    local risk_level
+    local risk_confidence
+    local risk_reasons
+    risk_level=$(echo "$risk_assessment" | cut -d'|' -f1)
+    risk_confidence=$(echo "$risk_assessment" | cut -d'|' -f2)
+    risk_reasons=$(echo "$risk_assessment" | cut -d'|' -f3-)
+    
+    # Display risk assessment
+    case "$risk_level" in
+        high)
+            ui_print_error "Risk Level: CRITICAL"
+            ;;
+        medium-high)
+            ui_print_warning "Risk Level: HIGH"
+            ;;
+        medium)
+            ui_print_warning "Risk Level: MEDIUM"
+            ;;
+        low)
+            ui_print_success "Risk Level: LOW"
+            ;;
+        *)
+            ui_print_info "Risk Level: UNKNOWN"
+            ;;
+    esac
+    
+    ui_print_metric "Confidence" "$risk_confidence" "%"
+    
+    if [ -n "$risk_reasons" ]; then
+        ui_print_info "Assessment Reasons:"
+        printf '%s\n' "$risk_reasons" | while read -r reason; do
+            [ -n "$reason" ] && printf '  • %s\n' "$reason"
+        done
     fi
     
-    local category
-    category=$(classify_voip_quality "$score")
+    # Show provider-specific recommendations
+    local carriers
+    carriers=$(get_transit_providers "$traceroute_output")
+    local recommendations
+    recommendations=$(get_provider_recommendation "$risk_level" "$carriers" "$latency")
     
-    ui_show_quality_status "$category" "$score"
+    if [ -n "$recommendations" ] && [ "$recommendations" != "Route acceptable for VoIP. Continue monitoring." ]; then
+        ui_print_subheader "Recommendations"
+        printf '%s\n' "$recommendations"
+    fi
     
-    # Return results as pipe-separated values
-    echo "$score|$category|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international"
+    # Return results as pipe-separated values (include risk assessment)
+    echo "$risk_level|$risk_confidence|$risk_reasons|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international"
 }
 
 run_all_tests() {
