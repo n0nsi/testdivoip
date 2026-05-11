@@ -6,6 +6,11 @@
 # ALL output to stdout is for terminal display only
 ################################################################################
 
+if [ -n "${TESTDIVOIP_COLORS_LOADED:-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+TESTDIVOIP_COLORS_LOADED=1
+
 # ANSI Colors - ONLY for display
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'

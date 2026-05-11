@@ -130,6 +130,24 @@ get_missing_dependencies() {
     return 0
 }
 
+# check_all_dependencies: compatibility wrapper used by the main script
+# Returns 0 when everything is available, 1 otherwise.
+check_all_dependencies() {
+    local missing
+    missing=$(get_missing_dependencies)
+    local status=$?
+
+    if [ $status -ne 0 ]; then
+        while IFS= read -r dep; do
+            [ -n "$dep" ] || continue
+            report_warning "Missing dependency: $dep"
+        done <<< "$missing"
+        return 1
+    fi
+
+    return 0
+}
+
 ################################################################################
 # ERROR REPORTING (stderr only - for user-facing errors)
 ################################################################################
