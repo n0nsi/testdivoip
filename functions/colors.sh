@@ -1,11 +1,12 @@
 #!/bin/bash
 
 ################################################################################
-# COLORS & UI - testdivoip
-# Funções para output colorido e formatação do terminal
+# PRESENTATION LAYER - colors.sh
+# UI functions ONLY - never contaminate data output
+# ALL output to stdout is for terminal display only
 ################################################################################
 
-# ANSI Colors
+# ANSI Colors - ONLY for display
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'

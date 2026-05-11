@@ -1,102 +1,99 @@
 #!/bin/bash
 
 ################################################################################
-# ANALYSIS & SCORING - testdivoip
-# Funções para análise de qualidade VoIP e cálculo de scores
+# ANALYSIS & SCORING LAYER - analysis.sh
+# LOGIC LAYER: Pure calculations, scoring, classification
+# NO decorative output, NO ANSI codes
+# Returns only numeric scores and status codes
 ################################################################################
 
 ################################################################################
-# QUALITY SCORING
+# QUALITY SCORING - Returns ONLY numeric score
 ################################################################################
 
-# Calcular score VoIP baseado em múltiplos critérios
+# calculate_voip_score: Calculate numeric score 0-100
+# Input: latency, jitter, loss, hops, asn_suspicious, international
+# Output: Single integer (score), no text
 calculate_voip_score() {
     local latency="$1"
     local jitter="$2"
     local loss="$3"
     local hops="$4"
-    local asn_suspicious="$5"
-    local international="$6"
+    local asn_suspicious="${5:-0}"
+    local international="${6:-0}"
     
     local score=100
-    local details=""
     
-    # Latência: ideal < 50ms, aceitável < 100ms, crítico > 150ms
+    # Validate inputs are numbers
+    if ! is_float "$latency" || ! is_float "$jitter" || ! is_float "$loss" || ! is_number "$hops"; then
+        echo "0"
+        return 1
+    fi
+    
+    # Latency: ideal <50ms, warning <100ms, critical >150ms
     if (( $(echo "$latency > 150" | bc -l) )); then
-        score=$((score - 30))
-        details="${details}\n    ✗ High latency (${latency}ms) - unacceptable for VoIP"
+        ((score -= 30))
     elif (( $(echo "$latency > 100" | bc -l) )); then
-        score=$((score - 15))
-        details="${details}\n    ⚠ Elevated latency (${latency}ms) - impacts call quality"
+        ((score -= 15))
     elif (( $(echo "$latency > 50" | bc -l) )); then
-        score=$((score - 5))
-        details="${details}\n    ◇ Moderate latency (${latency}ms) - acceptable"
-    else
-        details="${details}\n    ✓ Excellent latency (${latency}ms)"
+        ((score -= 5))
     fi
     
-    # Jitter: ideal < 20ms, aceitável < 50ms, crítico > 100ms
+    # Jitter: ideal <20ms, warning <50ms, critical >100ms
     if (( $(echo "$jitter > 100" | bc -l) )); then
-        score=$((score - 25))
-        details="${details}\n    ✗ Critical jitter (${jitter}ms) - RTP will degrade"
+        ((score -= 25))
     elif (( $(echo "$jitter > 50" | bc -l) )); then
-        score=$((score - 15))
-        details="${details}\n    ⚠ High jitter (${jitter}ms) - voice artifacts expected"
+        ((score -= 15))
     elif (( $(echo "$jitter > 20" | bc -l) )); then
-        score=$((score - 5))
-        details="${details}\n    ◇ Moderate jitter (${jitter}ms) - acceptable"
-    else
-        details="${details}\n    ✓ Excellent jitter (${jitter}ms)"
+        ((score -= 5))
     fi
     
-    # Packet Loss: ideal 0%, aceitável < 0.5%, crítico > 1%
+    # Packet Loss: ideal 0%, warning <0.5%, critical >1%
     if (( $(echo "$loss > 1" | bc -l) )); then
-        score=$((score - 30))
-        details="${details}\n    ✗ Unacceptable packet loss (${loss}%) - voice quality severely impacted"
+        ((score -= 30))
     elif (( $(echo "$loss > 0.5" | bc -l) )); then
-        score=$((score - 15))
-        details="${details}\n    ⚠ Packet loss detected (${loss}%) - quality degradation"
+        ((score -= 15))
     elif (( $(echo "$loss > 0" | bc -l) )); then
-        score=$((score - 5))
-        details="${details}\n    ◇ Minor packet loss (${loss}%) - acceptable"
-    else
-        details="${details}\n    ✓ Zero packet loss"
+        ((score -= 5))
     fi
     
-    # Hops: ideal < 10, aceitável < 15, crítico > 20
+    # Hops: ideal <10, warning <15, critical >20
     if (( hops > 20 )); then
-        score=$((score - 10))
-        details="${details}\n    ✗ Excessive hop count ($hops) - indicates poor routing"
+        ((score -= 10))
     elif (( hops > 15 )); then
-        score=$((score - 5))
-        details="${details}\n    ⚠ High hop count ($hops) - some routing complexity"
-    else
-        details="${details}\n    ✓ Good hop count ($hops)"
+        ((score -= 5))
     fi
     
-    # ASN suspeito
+    # ASN suspicious flag
     if [ "$asn_suspicious" = "1" ]; then
-        score=$((score - 10))
-        details="${details}\n    ⚠ Suspicious ASN detected - review peering"
+        ((score -= 10))
     fi
     
-    # Rota internacional
+    # International route flag
     if [ "$international" = "1" ]; then
-        score=$((score - 5))
-        details="${details}\n    ◇ International route detected - monitor performance"
+        ((score -= 5))
     fi
     
-    # Garantir que score fica entre 0 e 100
+    # Ensure score stays 0-100
     if (( score < 0 )); then
         score=0
+    elif (( score > 100 )); then
+        score=100
     fi
     
-    echo "$score|$details"
+    echo "$score"
 }
 
-# Classificar score em categoria
-classify_voip_score() {
+# classify_voip_quality: Map score to category
+# Input: score (0-100)
+# Output: Category string (EXCELENTE|BOM|ATENÇÃO|CRÍTICO)
+classify_voip_quality() {
     local score="$1"
+    
+    if ! is_number "$score"; then
+        echo "CRÍTICO"
+        return 1
+    fi
     
     if (( score >= 85 )); then
         echo "EXCELENTE"
@@ -110,219 +107,134 @@ classify_voip_score() {
 }
 
 ################################################################################
-# ASN ANALYSIS
+# ASN ANALYSIS - Pure logic, return status codes
 ################################################################################
 
-# Detectar ASNs conhecidos como problemáticos para VoIP
+# is_asn_suspicious: Check if ASN is known problematic
+# Returns: 0 (suspicious) or 1 (acceptable)
 is_asn_suspicious() {
     local asn="$1"
     
-    # ASNs conhecidos por problemas de trânsito/peering
-    local suspicious_patterns=(
-        "AS1299"   # Telia
-        "AS174"    # Cogent
-        "AS3356"   # Level3
-        "AS2914"   # NTT
-        "AS3257"   # GTT
-        "AS1668"   # AOL
-        "AS12389"  # Rostelecom
-        "AS5511"   # Orange
-    )
-    
-    for pattern in "${suspicious_patterns[@]}"; do
-        if [[ "$asn" == "$pattern" ]]; then
-            return 0  # true - suspeito
-        fi
-    done
-    
-    return 1  # false
+    # Known problematic transit/peering ASNs
+    case "$asn" in
+        AS1299|AS174|AS3356|AS2914|AS3257|AS1668|AS12389|AS5511)
+            return 0  # Suspicious
+            ;;
+        *)
+            return 1  # Not known as suspicious
+            ;;
+    esac
 }
 
-# Tentar obter nome da operadora por ASN
-get_asn_carrier() {
+# get_asn_carrier_name: Get human-readable carrier name
+# Returns: Carrier name string
+get_asn_carrier_name() {
     local asn="$1"
     
     case "$asn" in
-        "AS3356"|"AS1") echo "Level3/Lumen (Transit)" ;;
-        "AS174") echo "Cogent (Transit)" ;;
-        "AS1299") echo "Telia (Transit)" ;;
-        "AS2914") echo "NTT (Transit)" ;;
-        "AS3257") echo "GTT (Transit)" ;;
-        "AS16509") echo "Amazon AWS" ;;
-        "AS14061") echo "DigitalOcean" ;;
-        "AS8452") echo "Telemig (BR)" ;;
-        "AS27699") echo "Telefonica Brasil" ;;
-        *) echo "Unknown (ASN: $asn)" ;;
+        AS3356|AS1)     echo "Level3/Lumen" ;;
+        AS174)          echo "Cogent" ;;
+        AS1299)         echo "Telia" ;;
+        AS2914)         echo "NTT" ;;
+        AS3257)         echo "GTT" ;;
+        AS16509)        echo "Amazon AWS" ;;
+        AS14061)        echo "DigitalOcean" ;;
+        AS8452)         echo "Telemig" ;;
+        AS27699)        echo "Telefonica Brasil" ;;
+        *)              echo "Unknown" ;;
     esac
 }
 
 ################################################################################
-# DETAILED ANALYSIS
+# ROUTE ANALYSIS - Pure metrics extraction
 ################################################################################
 
-analyze_route_quality() {
-    local target="$1"
-    local traceroute_output="$2"
-    local mtr_output="$3"
+# estimate_route_quality: Estimate quality based on hop count
+# Returns: 0 (good), 1 (fair), 2 (poor)
+estimate_route_quality() {
+    local hop_count="$1"
     
-    local analysis=""
+    if ! is_number "$hop_count"; then
+        return 1
+    fi
     
-    # Análise 1: Quantidade de hops
-    local hops
-    hops=$(count_hops "$traceroute_output")
-    
-    if (( hops < 8 )); then
-        analysis="${analysis}\n✓ Route is direct and efficient ($hops hops)"
-    elif (( hops < 15 )); then
-        analysis="${analysis}\n◇ Route has moderate complexity ($hops hops)"
+    if (( hop_count < 8 )); then
+        return 0  # Good
+    elif (( hop_count < 15 )); then
+        return 1  # Fair
     else
-        analysis="${analysis}\n⚠ Route is complex with many intermediaries ($hops hops) - possible congestion risk"
+        return 2  # Poor
     fi
-    
-    # Análise 2: Estabilidade da rota
-    local instability
-    instability=$(detect_route_instability "$mtr_output")
-    
-    if (( instability > 3 )); then
-        analysis="${analysis}\n⚠ Route instability detected ($instability changes) - BGP flapping possible"
-    elif (( instability > 0 )); then
-        analysis="${analysis}\n◇ Minor route changes detected ($instability) - within normal parameters"
-    else
-        analysis="${analysis}\n✓ Route is stable and consistent"
-    fi
-    
-    # Análise 3: Rota internacional
-    if detect_international_route "$traceroute_output"; then
-        analysis="${analysis}\n◇ International route detected - increased latency expected"
-    else
-        analysis="${analysis}\n✓ Route appears to be domestic/regional"
-    fi
-    
-    # Análise 4: Variacão de latência
-    local stddev
-    stddev=$(echo "$mtr_output" | grep -oP 'Stdev\s+\K[0-9.]+'  | head -1)
-    
-    if (( $(echo "$stddev > 0" | bc -l) )); then
-        if (( $(echo "$stddev > 50" | bc -l) )); then
-            analysis="${analysis}\n⚠ Excessive latency variation ($stddev ms) - indicates path instability or congestion"
-        elif (( $(echo "$stddev > 20" | bc -l) )); then
-            analysis="${analysis}\n◇ Moderate latency variation ($stddev ms) - some congestion possible"
-        fi
-    fi
-    
-    echo -e "$analysis"
 }
 
-analyze_asn_chain() {
-    local traceroute_output="$1"
+# check_instability: Assess route instability
+# Returns: Numeric instability indicator
+check_instability() {
+    local instability_count="$1"
     
-    local analysis=""
-    local asn_count=0
-    local last_asn=""
-    local asn_changes=0
+    if ! is_number "$instability_count"; then
+        echo "0"
+        return 1
+    fi
     
-    analysis="${analysis}\n╔═ ASN Path Analysis ═╗\n"
-    
-    # Extrair IPs e seus ASNs
-    local ips=()
-    while IFS= read -r line; do
-        if [[ $line =~ ^\ +[0-9]+ ]]; then
-            local ip
-            ip=$(echo "$line" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            [ -n "$ip" ] && ips+=("$ip")
-        fi
-    done <<< "$traceroute_output"
-    
-    for ip in "${ips[@]}"; do
-        local asn
-        asn=$(get_asn_from_ip "$ip")
-        
-        ((asn_count++))
-        
-        if [ "$asn" != "$last_asn" ]; then
-            ((asn_changes++))
-            local carrier
-            carrier=$(get_asn_carrier "$asn")
-            analysis="${analysis}\n  $((asn_count)). $asn ($carrier)"
-            
-            if is_asn_suspicious "$asn"; then
-                analysis="${analysis} ⚠ SUSPICIOUS"
-            fi
-            
-            last_asn="$asn"
-        fi
-    done
-    
-    analysis="${analysis}\n  Total ASN changes: $asn_changes"
-    
-    echo -e "$analysis"
+    if (( instability_count > 3 )); then
+        echo "2"  # High instability
+    elif (( instability_count > 0 )); then
+        echo "1"  # Some instability
+    else
+        echo "0"  # Stable
+    fi
 }
 
 ################################################################################
-# COMPREHENSIVE REPORT ANALYSIS
+# METRICS EXTRACTION - Pure data extraction, no text
 ################################################################################
 
-generate_quality_assessment() {
-    local target="$1"
-    local latency="$2"
-    local jitter="$3"
-    local loss="$4"
-    local hops="$5"
-    local asn_suspicious="$6"
-    local international="$7"
+# extract_metrics_from_ping: Parse ping output
+# Returns: "avg loss min max stddev" (space-separated numbers only)
+extract_metrics_from_ping() {
+    local ping_output="$1"
     
-    local assessment=""
+    local avg min max stddev loss
+    avg=$(echo "$ping_output" | grep -oP 'avg=\K[0-9.]+' | head -1)
+    min=$(echo "$ping_output" | grep -oP 'min=\K[0-9.]+' | head -1)
+    max=$(echo "$ping_output" | grep -oP 'max=\K[0-9.]+' | head -1)
+    stddev=$(echo "$ping_output" | grep -oP 'stddev=\K[0-9.]+' | head -1)
+    loss=$(echo "$ping_output" | grep -oP '[0-9.]+(?=% packet loss)' | head -1)
     
-    assessment="${assessment}\n╔═ VoIP Quality Assessment for $target ═╗\n"
+    printf '%s %s %s %s %s\n' \
+        "${avg:-0}" "${loss:-0}" "${min:-0}" "${max:-0}" "${stddev:-0}"
+}
+
+################################################################################
+# NUMERIC VALIDATION - Safe comparison
+################################################################################
+
+# safe_compare_float: Compare two floats safely
+# Usage: safe_compare_float "3.5" "-gt" "2.5"
+# Returns: 0 (true) or 1 (false)
+safe_compare_float() {
+    local value1="$1"
+    local operator="$2"
+    local value2="$3"
     
-    # RTT Assessment
-    assessment="${assessment}\n[Latency]\n"
-    if (( $(echo "$latency <= 50" | bc -l) )); then
-        assessment="${assessment}  Status: EXCELLENT - Ideal for any VoIP application\n"
-        assessment="${assessment}  Latency: ${latency}ms (target < 50ms)\n"
-    elif (( $(echo "$latency <= 100" | bc -l) )); then
-        assessment="${assessment}  Status: GOOD - Acceptable for most VoIP applications\n"
-        assessment="${assessment}  Latency: ${latency}ms (acceptable < 100ms)\n"
-    elif (( $(echo "$latency <= 150" | bc -l) )); then
-        assessment="${assessment}  Status: FAIR - May impact user experience\n"
-        assessment="${assessment}  Latency: ${latency}ms (warning > 100ms)\n"
-    else
-        assessment="${assessment}  Status: POOR - Significant impact on voice quality\n"
-        assessment="${assessment}  Latency: ${latency}ms (critical > 150ms)\n"
+    if ! is_float "$value1" || ! is_float "$value2"; then
+        return 1
     fi
     
-    # Jitter Assessment
-    assessment="${assessment}\n[Jitter]\n"
-    if (( $(echo "$jitter <= 20" | bc -l) )); then
-        assessment="${assessment}  Status: EXCELLENT - Stable for high-quality VoIP\n"
-        assessment="${assessment}  Jitter: ${jitter}ms (target < 20ms)\n"
-    elif (( $(echo "$jitter <= 50" | bc -l) )); then
-        assessment="${assessment}  Status: GOOD - Acceptable with modern codecs\n"
-        assessment="${assessment}  Jitter: ${jitter}ms (acceptable < 50ms)\n"
-    elif (( $(echo "$jitter <= 100" | bc -l) )); then
-        assessment="${assessment}  Status: FAIR - May require jitter buffer adjustment\n"
-        assessment="${assessment}  Jitter: ${jitter}ms (warning > 50ms)\n"
-    else
-        assessment="${assessment}  Status: POOR - Voice quality will suffer\n"
-        assessment="${assessment}  Jitter: ${jitter}ms (critical > 100ms)\n"
+    (( $(echo "$value1 $operator $value2" | bc -l) )) && return 0 || return 1
+}
+
+# safe_compare_int: Compare two integers safely
+safe_compare_int() {
+    local value1="$1"
+    local operator="$2"
+    local value2="$3"
+    
+    if ! is_number "$value1" || ! is_number "$value2"; then
+        return 1
     fi
     
-    # Loss Assessment
-    assessment="${assessment}\n[Packet Loss]\n"
-    if (( $(echo "$loss == 0" | bc -l) )); then
-        assessment="${assessment}  Status: EXCELLENT - No packet loss detected\n"
-        assessment="${assessment}  Loss: ${loss}%\n"
-    elif (( $(echo "$loss <= 0.5" | bc -l) )); then
-        assessment="${assessment}  Status: GOOD - Minimal impact on voice\n"
-        assessment="${assessment}  Loss: ${loss}% (acceptable < 0.5%)\n"
-    elif (( $(echo "$loss <= 1" | bc -l) )); then
-        assessment="${assessment}  Status: FAIR - Some voice quality degradation expected\n"
-        assessment="${assessment}  Loss: ${loss}% (warning > 0.5%)\n"
-    else
-        assessment="${assessment}  Status: POOR - Significant voice quality issues\n"
-        assessment="${assessment}  Loss: ${loss}% (critical > 1%)\n"
-    fi
-    
-    echo -e "$assessment"
+    (( value1 $operator value2 )) && return 0 || return 1
 }
 

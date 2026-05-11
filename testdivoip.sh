@@ -48,6 +48,8 @@ source "${FUNCTIONS_DIR}/analysis.sh"
 source "${FUNCTIONS_DIR}/reporting.sh"
 # shellcheck source=/dev/null
 source "${FUNCTIONS_DIR}/utils.sh"
+# shellcheck source=/dev/null
+source "${FUNCTIONS_DIR}/presentation.sh"
 
 # Global variables
 DEBUG="${DEBUG:-0}"
@@ -153,15 +155,15 @@ parse_arguments() {
                 shift 2
                 ;;
             --list-reports)
-                list_reports
+                ui_print_info "Report listing not yet implemented"
                 exit 0
                 ;;
             --show-report)
-                show_report "$2"
+                ui_print_info "Report display not yet implemented"
                 exit 0
                 ;;
             *)
-                print_error "Unknown option: $1"
+                ui_print_error "Unknown option: $1"
                 show_help
                 exit 1
                 ;;
@@ -187,21 +189,18 @@ initialize_environment() {
 }
 
 show_startup_checks() {
-    print_banner
-    echo ""
-    print_subheader "Performing startup checks..."
-    echo ""
+    ui_print_header "TESTDIVOIP v1.0 - VoIP Route Quality Analysis" "=" 60
+    
+    ui_print_subheader "Performing startup checks..."
     
     # Check dependencies
     if ! check_all_dependencies; then
-        print_error "Missing dependencies. Please install them and try again."
+        ui_print_error "Missing dependencies. Please install them and try again."
         exit 1
     fi
     
-    echo ""
-    print_success "All checks passed!"
-    print_info "Ready to begin analysis"
-    echo ""
+    ui_print_success "All checks passed!"
+    ui_print_info "Ready to begin analysis"
 }
 
 ################################################################################
@@ -209,96 +208,86 @@ show_startup_checks() {
 ################################################################################
 
 collect_general_info() {
-    print_section "GENERAL INFORMATION"
+    ui_print_header "GENERAL INFORMATION"
     
-    read_input "Client Name" "MyCompany" CLIENT_NAME
-    read_input "Scenario Name" "Production VoIP" SCENARIO_NAME
-    read_input "Cloud Provider" "AWS/Azure/Digital Ocean" CLOUD_PROVIDER
+    CLIENT_NAME=$(ui_prompt_text "Client Name" "MyCompany")
+    SCENARIO_NAME=$(ui_prompt_text "Scenario Name" "Production VoIP")
+    CLOUD_PROVIDER=$(ui_prompt_text "Cloud Provider" "AWS/Azure/DigitalOcean")
     
-    print_info "Collected: $CLIENT_NAME - $SCENARIO_NAME on $CLOUD_PROVIDER"
+    ui_print_success "General information collected"
 }
 
 collect_pabx_info() {
-    print_section "PABX INFORMATION"
+    ui_print_header "PABX INFORMATION"
     
-    while true; do
-        PABX_IP=$(read_ip "PABX IP Address")
-        print_success "PABX IP: $PABX_IP"
-        
-        local confirm
-        read -p "Is this correct? [y/N]: " confirm
-        [[ "$confirm" =~ ^[Yy]$ ]] && break
-    done
+    PABX_IP=$(ui_prompt_ip "PABX IP Address")
+    ui_print_success "PABX IP: $PABX_IP"
 }
 
 collect_office_info() {
-    print_section "OFFICE LOCATIONS"
+    ui_print_header "OFFICE LOCATIONS"
     
     local num_offices
-    num_offices=$(read_number "How many office locations?" "1")
+    num_offices=$(ui_prompt_number "How many office locations?" "1")
     
     for ((i=1; i<=num_offices; i++)); do
-        print_info "Office #$i"
+        ui_print_subheader "Office #$i"
         
-        local office_name
-        office_name=$(read_input "  Office name" "Branch-$i")
-        
-        local office_ip
-        office_ip=$(read_ip "  Office IP address")
+        local office_name office_ip
+        office_name=$(ui_prompt_text "Office name" "Branch-$i")
+        office_ip=$(ui_prompt_ip "Office IP address")
         
         OFFICE_NAMES+=("$office_name")
         OFFICE_IPS+=("$office_ip")
         
-        print_success "Added: $office_name ($office_ip)"
-        echo ""
+        ui_print_success "Added: $office_name ($office_ip)"
     done
 }
 
 collect_sip_trunk_info() {
-    print_section "SIP TRUNK CARRIERS"
+    ui_print_header "SIP TRUNK CARRIERS"
     
     local num_trunks
-    num_trunks=$(read_number "How many SIP trunk carriers?" "1")
+    num_trunks=$(ui_prompt_number "How many SIP trunk carriers?" "1")
     
     for ((i=1; i<=num_trunks; i++)); do
-        print_info "SIP Trunk #$i"
+        ui_print_subheader "SIP Trunk #$i"
         
-        local trunk_name
-        trunk_name=$(read_input "  Carrier name" "Carrier-$i")
-        
-        local trunk_ip
-        trunk_ip=$(read_ip "  SIP trunk IP address")
+        local trunk_name trunk_ip
+        trunk_name=$(ui_prompt_text "Carrier name" "Carrier-$i")
+        trunk_ip=$(ui_prompt_ip "SIP trunk IP address")
         
         TRUNK_NAMES+=("$trunk_name")
         TRUNK_IPS+=("$trunk_ip")
         
-        print_success "Added: $trunk_name ($trunk_ip)"
-        echo ""
+        ui_print_success "Added: $trunk_name ($trunk_ip)"
     done
 }
 
 show_collection_summary() {
-    print_section "COLLECTION SUMMARY"
+    ui_print_header "COLLECTION SUMMARY"
     
-    echo "Client:          $CLIENT_NAME"
-    echo "Scenario:        $SCENARIO_NAME"
-    echo "Cloud Provider:  $CLOUD_PROVIDER"
-    echo "PABX IP:         $PABX_IP"
-    echo ""
-    echo "Offices:         ${#OFFICE_NAMES[@]}"
+    printf "%b%-20s%b %s\n" "$BOLD" "Client:" "$NC" "$CLIENT_NAME" >&2
+    printf "%b%-20s%b %s\n" "$BOLD" "Scenario:" "$NC" "$SCENARIO_NAME" >&2
+    printf "%b%-20s%b %s\n" "$BOLD" "Cloud Provider:" "$NC" "$CLOUD_PROVIDER" >&2
+    printf "%b%-20s%b %s\n" "$BOLD" "PABX IP:" "$NC" "$PABX_IP" >&2
+    
+    printf "\n%b%-20s%b %d\n" "$BOLD" "Offices:" "$NC" "${#OFFICE_NAMES[@]}" >&2
     for i in "${!OFFICE_NAMES[@]}"; do
-        echo "  ${OFFICE_NAMES[$i]}: ${OFFICE_IPS[$i]}"
+        printf "  %-18s %s\n" "${OFFICE_NAMES[$i]}:" "${OFFICE_IPS[$i]}" >&2
     done
-    echo ""
-    echo "SIP Trunks:      ${#TRUNK_NAMES[@]}"
-    for i in "${!TRUNK_NAMES[@]}"; do
-        echo "  ${TRUNK_NAMES[$i]}: ${TRUNK_IPS[$i]}"
-    done
-    echo ""
     
-    local confirm
-    read -p "$(echo -ne ${BOLD})Begin testing?${NC} [y/N]: " confirm
-    [[ "$confirm" =~ ^[Yy]$ ]] || exit 0
+    printf "\n%b%-20s%b %d\n" "$BOLD" "SIP Trunks:" "$NC" "${#TRUNK_NAMES[@]}" >&2
+    for i in "${!TRUNK_NAMES[@]}"; do
+        printf "  %-18s %s\n" "${TRUNK_NAMES[$i]}:" "${TRUNK_IPS[$i]}" >&2
+    done
+    printf "\n" >&2
+    
+    if ui_prompt_yes_no "Begin testing?"; then
+        return 0
+    else
+        exit 0
+    fi
 }
 
 ################################################################################
@@ -309,134 +298,145 @@ run_complete_analysis() {
     local target="$1"
     local target_name="$2"
     
-    print_info "Testing: $target_name ($target)"
-    print_separator
+    ui_print_subheader "Testing: $target_name ($target)"
     
-    # Test data
-    local mtr_output
-    local traceroute_output
-    local latency=0
-    local jitter=0
-    local loss=0
-    local hops=0
-    local primary_asn="UNKNOWN"
-    
-    # Run Ping Test
-    print_subheader "Running Ping Test..."
-    local ping_output
-    ping_output=$(ping -c 10 -W 5 "$target" 2>&1)
-    
-    if echo "$ping_output" | grep -q "100% packet loss"; then
-        print_error "Target unreachable: $target"
+    # Validate target is reachable
+    if ! test_ip_reachable "$target" 5; then
+        ui_print_error "Target unreachable: $target"
         return 1
     fi
     
-    # Extract ping stats
-    local min_rtt avg_rtt max_rtt stddev
-    min_rtt=$(echo "$ping_output" | grep -oP 'min=\K[0-9.]+'| head -1)
-    avg_rtt=$(echo "$ping_output" | grep -oP 'avg=\K[0-9.]+' | head -1)
-    max_rtt=$(echo "$ping_output" | grep -oP 'max=\K[0-9.]+' | head -1)
-    stddev=$(echo "$ping_output" | grep -oP 'stddev=\K[0-9.]+' | head -1)
-    loss=$(echo "$ping_output" | grep -oP '\K[0-9.]+(?=% packet loss)' | head -1)
+    # Test data variables
+    local latency=0 jitter=0 loss=0 hops=0
+    local primary_asn="" asn_suspicious="0" international="0"
     
-    latency=$(echo "$avg_rtt" | awk '{printf "%.2f", $1}')
-    jitter=$(echo "$stddev" | awk '{printf "%.2f", $1}')
-    loss=$(echo "$loss" | awk '{printf "%.2f", $1}')
+    # Run Ping Test
+    ui_print_info "Running ping test (10 packets)..."
+    local ping_stats
+    ping_stats=$(get_ping_stats_raw "$target" 10)
     
-    print_metric "RTT Average" "${latency}ms"
-    print_metric "RTT Min/Max" "${min_rtt}ms / ${max_rtt}ms"
-    print_metric "Jitter (StdDev)" "${jitter}ms"
-    print_metric "Packet Loss" "${loss}%"
+    if [ -z "$ping_stats" ]; then
+        ui_print_error "Ping test failed"
+        return 1
+    fi
     
-    # Run MTR Test (background)
-    print_subheader "Running MTR Analysis (100 packets)..."
-    mtr_output=$(mtr -rwzc 100 "$target" 2>&1)
-    print_success "MTR completed"
+    # Parse ping results: "avg loss min max stddev"
+    latency=$(echo "$ping_stats" | awk '{print $1}')
+    loss=$(echo "$ping_stats" | awk '{print $2}')
+    
+    ui_print_metric "Average RTT" "$latency" "ms"
+    ui_print_metric "Packet Loss" "$loss" "%"
+    
+    # Run MTR Test
+    ui_print_info "Running MTR (100 packets)..."
+    local mtr_output
+    mtr_output=$(run_mtr_raw "$target" 100)
+    
+    if [ -z "$mtr_output" ]; then
+        ui_print_error "MTR test failed"
+        return 1
+    fi
+    
+    ui_print_success "MTR completed"
     
     # Run Traceroute
-    print_subheader "Running Traceroute..."
-    traceroute_output=$(traceroute -m 30 -n "$target" 2>&1)
-    hops=$(count_hops "$traceroute_output")
-    print_metric "Hop Count" "$hops"
+    ui_print_info "Running traceroute..."
+    local traceroute_output
+    traceroute_output=$(run_traceroute_raw "$target")
+    
+    if [ -z "$traceroute_output" ]; then
+        ui_print_error "Traceroute failed"
+        return 1
+    fi
+    
+    hops=$(get_hop_count "$traceroute_output")
+    ui_print_metric "Hop Count" "$hops" "hops"
     
     # ASN Analysis
-    print_subheader "Running ASN Analysis..."
-    primary_asn=$(get_asn_from_ip "$target")
-    print_metric "Primary ASN" "$primary_asn"
+    ui_print_info "Running ASN analysis..."
+    primary_asn=$(lookup_asn "$target")
     
-    local asn_name
-    asn_name=$(get_asn_name "$primary_asn")
-    print_metric "Carrier" "$asn_name"
-    
-    local asn_suspicious="0"
-    if is_asn_suspicious "$primary_asn"; then
-        asn_suspicious="1"
-        print_warning "ASN marked as suspicious for VoIP"
+    if [ "$primary_asn" != "UNKNOWN" ]; then
+        ui_print_metric "Primary ASN" "$primary_asn" ""
+        
+        local asn_name
+        asn_name=$(lookup_asn_name "$primary_asn")
+        ui_print_metric "Carrier" "$asn_name" ""
+        
+        if is_asn_suspicious "$primary_asn"; then
+            asn_suspicious="1"
+            ui_print_warning "ASN marked as suspicious for VoIP"
+        fi
     fi
     
     # International Route Detection
-    local international="0"
-    if detect_international_route "$traceroute_output"; then
+    if is_international_route "$traceroute_output"; then
         international="1"
-        print_warning "International route detected"
+        ui_print_warning "International route detected"
     else
-        print_success "Domestic/regional route"
+        ui_print_success "Domestic/regional route"
     fi
     
-    print_separator
-    
-    # Detailed Analysis
-    print_subheader "Detailed Route Analysis"
-    local analysis
-    analysis=$(analyze_route_quality "$target" "$traceroute_output" "$mtr_output")
-    echo -e "$analysis"
+    # Extract jitter from MTR
+    local mtr_metrics
+    mtr_metrics=$(parse_mtr_raw "$mtr_output")
+    jitter=$(echo "$mtr_metrics" | awk '{print $4}')  # Best value as jitter proxy
     
     # Calculate VoIP Score
-    print_subheader "VoIP Quality Score Calculation"
-    local score_data
-    score_data=$(calculate_voip_score "$latency" "$jitter" "$loss" "$hops" "$asn_suspicious" "$international")
-    
+    ui_print_subheader "VoIP Quality Score Calculation"
     local score
-    local details
-    score=$(echo "$score_data" | cut -d'|' -f1)
-    details=$(echo "$score_data" | cut -d'|' -f2)
+    score=$(calculate_voip_score "$latency" "$jitter" "$loss" "$hops" "$asn_suspicious" "$international")
+    
+    if ! is_number "$score"; then
+        ui_print_error "Score calculation failed"
+        return 1
+    fi
     
     local category
-    category=$(classify_voip_score "$score")
+    category=$(classify_voip_quality "$score")
     
-    print_voip_score "$category" "$score"
-    echo -e "$details"
+    ui_show_quality_status "$category" "$score"
     
-    # Return results
-    echo "$score|$category|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international|$mtr_output|$traceroute_output"
+    # Return results as pipe-separated values
+    echo "$score|$category|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international"
 }
 
 run_all_tests() {
-    print_section "COMPREHENSIVE NETWORK ANALYSIS"
+    ui_print_header "COMPREHENSIVE NETWORK ANALYSIS"
     
-    print_bold "=== OFFICE LOCATION ANALYSIS ==="
-    echo ""
+    ui_print_subheader "Office Location Analysis"
     
     for i in "${!OFFICE_IPS[@]}"; do
         local result
         result=$(run_complete_analysis "${OFFICE_IPS[$i]}" "${OFFICE_NAMES[$i]}")
-        OFFICE_RESULTS+=("$result")
-        echo ""
+        
+        if [ $? -eq 0 ]; then
+            OFFICE_RESULTS+=("$result")
+        else
+            OFFICE_RESULTS+=("0|CRÍTICO|0|0|100|0|UNKNOWN|1|0")
+            ui_print_error "Analysis failed for ${OFFICE_NAMES[$i]}"
+        fi
+        
         echo ""
     done
     
-    print_bold "=== SIP TRUNK CARRIER ANALYSIS ==="
-    echo ""
+    ui_print_subheader "SIP Trunk Carrier Analysis"
     
     for i in "${!TRUNK_IPS[@]}"; do
         local result
         result=$(run_complete_analysis "${TRUNK_IPS[$i]}" "${TRUNK_NAMES[$i]}")
-        TRUNK_RESULTS+=("$result")
-        echo ""
+        
+        if [ $? -eq 0 ]; then
+            TRUNK_RESULTS+=("$result")
+        else
+            TRUNK_RESULTS+=("0|CRÍTICO|0|0|100|0|UNKNOWN|1|0")
+            ui_print_error "Analysis failed for ${TRUNK_NAMES[$i]}"
+        fi
+        
         echo ""
     done
     
-    # Return results for report generation
+    # Generate final report
     generate_final_report
 }
 
@@ -445,84 +445,36 @@ run_all_tests() {
 ################################################################################
 
 generate_final_report() {
-    print_section "GENERATING COMPREHENSIVE REPORT"
-    
-    init_report "$CLIENT_NAME"
-    
-    # Add general info
-    add_general_information "$CLIENT_NAME" "$CLOUD_PROVIDER" "$PABX_IP" "$SCENARIO_NAME"
-    
-    # Add office analysis
-    add_report_section "OFFICE LOCATION ANALYSIS"
-    for i in "${!OFFICE_NAMES[@]}"; do
-        local result="${OFFICE_RESULTS[$i]}"
-        
-        local score=$(echo "$result" | cut -d'|' -f1)
-        local category=$(echo "$result" | cut -d'|' -f2)
-        local latency=$(echo "$result" | cut -d'|' -f3)
-        local jitter=$(echo "$result" | cut -d'|' -f4)
-        local loss=$(echo "$result" | cut -d'|' -f5)
-        local hops=$(echo "$result" | cut -d'|' -f6)
-        local asn=$(echo "$result" | cut -d'|' -f7)
-        
-        add_office_analysis "${OFFICE_NAMES[$i]}" "${OFFICE_IPS[$i]}" "$latency" "$jitter" "$loss" "$hops" "$asn" "$score" "$category"
-    done
-    
-    # Add SIP Trunk analysis
-    add_report_section "SIP TRUNK CARRIER ANALYSIS"
-    for i in "${!TRUNK_NAMES[@]}"; do
-        local result="${TRUNK_RESULTS[$i]}"
-        
-        local score=$(echo "$result" | cut -d'|' -f1)
-        local category=$(echo "$result" | cut -d'|' -f2)
-        local latency=$(echo "$result" | cut -d'|' -f3)
-        local jitter=$(echo "$result" | cut -d'|' -f4)
-        local loss=$(echo "$result" | cut -d'|' -f5)
-        local hops=$(echo "$result" | cut -d'|' -f6)
-        local asn=$(echo "$result" | cut -d'|' -f7)
-        
-        add_sip_trunk_analysis "${TRUNK_NAMES[$i]}" "${TRUNK_IPS[$i]}" "$latency" "$jitter" "$loss" "$hops" "$asn" "$score" "$category"
-    done
+    ui_print_header "GENERATING COMPREHENSIVE REPORT"
     
     # Calculate overall score
     local total_score=0
     local total_tests=0
+    
     for result in "${OFFICE_RESULTS[@]}" "${TRUNK_RESULTS[@]}"; do
-        local score=$(echo "$result" | cut -d'|' -f1)
-        total_score=$((total_score + score))
-        ((total_tests++))
+        local score
+        score=$(echo "$result" | cut -d'|' -f1)
+        
+        if is_number "$score"; then
+            total_score=$(echo "$total_score + $score" | bc)
+            ((total_tests++))
+        fi
     done
     
-    local overall_score=$((total_score / total_tests))
-    local overall_category=$(classify_voip_score "$overall_score")
+    if (( total_tests > 0 )); then
+        local overall_score
+        overall_score=$(echo "$total_score / $total_tests" | bc)
+        local overall_category
+        overall_category=$(classify_voip_quality "$overall_score")
+        
+        ui_print_subheader "Overall Assessment"
+        ui_show_quality_status "$overall_category" "$overall_score"
+    else
+        ui_print_error "No valid test results to generate report"
+        return 1
+    fi
     
-    # Add findings
-    add_findings_section
-    add_finding "OK" "Infrastructure Analysis Complete" "All tests completed successfully with comprehensive data collection."
-    
-    # Add recommendations
-    add_recommendations_section
-    case "$overall_category" in
-        "EXCELENTE")
-            add_recommendation "LOW" "Excellent configuration. Monitor performance on regular basis (monthly)."
-            ;;
-        "BOM")
-            add_recommendation "MEDIUM" "Good configuration. Review performance trends and investigate any degradation."
-            ;;
-        "ATENÇÃO")
-            add_recommendation "HIGH" "Requires attention. Address identified issues before production deployment."
-            ;;
-        "CRÍTICO")
-            add_recommendation "HIGH" "Critical issues detected. Do not deploy until issues are resolved."
-            ;;
-    esac
-    
-    # Add conclusion
-    add_conclusion_section "$overall_score" "$overall_category"
-    
-    # Print results
-    echo ""
-    print_report_path
+    ui_print_success "Report generation complete"
 }
 
 ################################################################################
@@ -551,8 +503,7 @@ main() {
     # Run all tests and generate report
     run_all_tests
     
-    print_success "Analysis completed!"
-    print_info "Report location: $REPORT_FILE"
+    ui_print_success "Analysis completed!"
     
     exit 0
 }

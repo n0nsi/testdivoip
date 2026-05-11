@@ -1,159 +1,24 @@
 #!/bin/bash
 
 ################################################################################
-# INTERACTIVE INPUT & UTILITIES - testdivoip
-# Funções para entrada interativa e utilitários gerais
+# UTILITIES LAYER - utils.sh
+# Pure utility functions: arrays, formatting, system info
+# NO presentation layer calls (no print_* or colors)
+# Input validation is in logging.sh
 ################################################################################
 
 ################################################################################
-# INTERACTIVE INPUT
+# ARRAY UTILITIES - Pure logic
 ################################################################################
 
-read_input() {
-    local prompt="$1"
-    local default="${2:-}"
-    local var_name="$3"
-    
-    if [ -n "$default" ]; then
-        read -p "$(echo -ne ${BOLD})${prompt}${NC} [${CYAN}${default}${NC}]: " input
-        input="${input:-$default}"
-    else
-        read -p "$(echo -ne ${BOLD})${prompt}${NC}: " input
-    fi
-    
-    if [ -n "$var_name" ]; then
-        eval "$var_name='$input'"
-    else
-        echo "$input"
-    fi
-}
-
-read_menu() {
-    local prompt="$1"
-    shift
-    local options=("$@")
-    
-    echo ""
-    print_bold "$prompt"
-    echo ""
-    
-    for i in "${!options[@]}"; do
-        printf "  ${CYAN}%d)${NC} %s\n" "$((i+1))" "${options[$i]}"
-    done
-    
-    local choice
-    read -p "$(echo -ne ${BOLD})Select an option${NC} [1-${#options[@]}]: " choice
-    
-    if [[ $choice =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
-        echo "$((choice-1))"
-    else
-        print_error "Invalid selection"
-        return 1
-    fi
-}
-
-read_confirmed() {
-    local prompt="$1"
-    local value
-    
-    value=$(read_input "$prompt")
-    
-    echo ""
-    print_info "Entered: $value"
-    
-    local confirm
-    read -p "Is this correct? [y/N]: " confirm
-    
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        echo "$value"
-        return 0
-    else
-        return 1
-    fi
-}
-
-read_ip() {
-    local prompt="$1"
-    local ip
-    
-    while true; do
-        ip=$(read_input "$prompt")
-        
-        if is_valid_ip "$ip"; then
-            echo "$ip"
-            return 0
-        else
-            print_error "Invalid IP address: $ip"
-        fi
-    done
-}
-
-read_number() {
-    local prompt="$1"
-    local default="${2:-}"
-    local number
-    
-    while true; do
-        number=$(read_input "$prompt" "$default")
-        
-        if is_number "$number"; then
-            echo "$number"
-            return 0
-        else
-            print_error "Invalid number: $number"
-        fi
-    done
-}
-
-################################################################################
-# CONFIGURATION MANAGEMENT
-################################################################################
-
-save_config() {
-    local config_file="$1"
-    shift
-    declare -a config_vars=("$@")
-    
-    {
-        echo "# testdivoip configuration"
-        echo "# Generated: $(date)"
-        echo ""
-        
-        for var in "${config_vars[@]}"; do
-            local value="${!var}"
-            echo "export $var='$value'"
-        done
-    } > "$config_file"
-    
-    print_success "Configuration saved to: $config_file"
-}
-
-load_config() {
-    local config_file="$1"
-    
-    if [ -f "$config_file" ]; then
-        # shellcheck source=/dev/null
-        source "$config_file"
-        print_success "Configuration loaded from: $config_file"
-        return 0
-    else
-        print_warning "Configuration file not found: $config_file"
-        return 1
-    fi
-}
-
-################################################################################
-# ARRAY FUNCTIONS
-################################################################################
-
-# Adicionar elemento a array se não existir
+# array_add_unique: Add element to array if not duplicate
 array_add_unique() {
     local -n arr=$1
     local element=$2
     
     for item in "${arr[@]}"; do
         if [ "$item" = "$element" ]; then
-            return 1  # já existe
+            return 1  # Already exists
         fi
     done
     
@@ -161,7 +26,7 @@ array_add_unique() {
     return 0
 }
 
-# Remover elemento de array
+# array_remove: Remove element from array
 array_remove() {
     local -n arr=$1
     local element=$2
@@ -176,7 +41,7 @@ array_remove() {
     arr=("${new_arr[@]}")
 }
 
-# Encontrar índice do elemento
+# array_index_of: Find index of element in array
 array_index_of() {
     local -n arr=$1
     local element=$2
@@ -192,20 +57,29 @@ array_index_of() {
 }
 
 ################################################################################
-# FORMATTING UTILITIES
+# FORMATTING UTILITIES - Pure string manipulation
 ################################################################################
 
-# Formatar número com casas decimais
+# format_number: Format number with decimal places
 format_number() {
     local number="$1"
     local decimals="${2:-2}"
     
+    if ! is_float "$number"; then
+        echo "$number"
+        return 1
+    fi
+    
     printf "%.${decimals}f" "$number"
 }
 
-# Converter bytes para formato legível
+# format_bytes: Convert bytes to human-readable format
 format_bytes() {
     local bytes="$1"
+    
+    if ! is_number "$bytes"; then
+        return 1
+    fi
     
     if (( bytes < 1024 )); then
         echo "${bytes}B"
@@ -218,9 +92,13 @@ format_bytes() {
     fi
 }
 
-# Formatar tempo
+# format_uptime: Format seconds to human-readable uptime
 format_uptime() {
     local seconds="$1"
+    
+    if ! is_number "$seconds"; then
+        return 1
+    fi
     
     local days=$((seconds / 86400))
     local hours=$(( (seconds % 86400) / 3600 ))
@@ -236,76 +114,80 @@ format_uptime() {
 }
 
 ################################################################################
-# PROGRESS TRACKING
+# NUMERIC UTILITIES - Pure calculations
 ################################################################################
 
-# Simples progress bar
-progress_bar() {
-    local current="$1"
-    local total="$2"
-    local width="${3:-40}"
-    
-    local percentage=$((current * 100 / total))
-    local filled=$((percentage * width / 100))
-    
-    printf "["
-    printf "%${filled}s" | tr ' ' '█'
-    printf "%$((width-filled))s" | tr ' ' '░'
-    printf "] %d%% (%d/%d)\n" "$percentage" "$current" "$total"
+# max_of: Find maximum from list of numbers
+max_of() {
+    printf '%s\n' "$@" | sort -nr | head -1
 }
 
-################################################################################
-# RANDOM UTILITIES
-################################################################################
-
-# Gerar ID único
-generate_id() {
-    local prefix="${1:-id}"
-    echo "${prefix}_$(date +%s)_$$"
+# min_of: Find minimum from list of numbers
+min_of() {
+    printf '%s\n' "$@" | sort -n | head -1
 }
 
-# Sleep com animação
-sleep_with_animation() {
-    local seconds="$1"
-    local message="${2:-Waiting}"
+# average_of: Calculate average of numbers
+average_of() {
+    local sum=0
+    local count=0
     
-    for ((i=seconds; i>0; i--)); do
-        printf "\r${CYAN}${message}...${NC} $i "
-        sleep 1
+    for num in "$@"; do
+        if is_float "$num"; then
+            sum=$(echo "$sum + $num" | bc -l)
+            ((count++))
+        fi
     done
-    printf "\r%${#message}s\r" ""
+    
+    if (( count > 0 )); then
+        echo "$sum / $count" | bc -l
+    fi
+}
+
+# sum_of: Calculate sum of numbers
+sum_of() {
+    local sum=0
+    
+    for num in "$@"; do
+        if is_float "$num"; then
+            sum=$(echo "$sum + $num" | bc -l)
+        fi
+    done
+    
+    echo "$sum"
 }
 
 ################################################################################
-# FILE UTILITIES
+# TIME UTILITIES - Pure functions
 ################################################################################
 
-# Verificar espaço em disco
-check_disk_space() {
-    local path="${1:-.}"
+# get_timestamp: Get current timestamp ISO format
+get_timestamp() {
+    date '+%Y-%m-%d %H:%M:%S'
+}
+
+# get_timestamp_compact: Get compact timestamp
+get_timestamp_compact() {
+    date '+%Y%m%d_%H%M%S'
+}
+
+# elapsed_time: Calculate seconds between timestamps
+elapsed_time() {
+    local start_time="$1"
+    local end_time="${2:-$(date +%s)}"
     
-    if ! check_dependency "df"; then
+    if ! is_number "$start_time" || ! is_number "$end_time"; then
         return 1
     fi
     
-    df -h "$path" | tail -1 | awk '{print $4}'
-}
-
-# Limpança de arquivos temporários
-cleanup_old_files() {
-    local directory="$1"
-    local days="${2:-7}"
-    
-    if [ -d "$directory" ]; then
-        find "$directory" -type f -mtime "+$days" -delete
-        print_success "Cleaned up files older than $days days in $directory"
-    fi
+    echo $((end_time - start_time))
 }
 
 ################################################################################
-# SYSTEM UTILITIES
+# SYSTEM INFORMATION - Read-only queries
 ################################################################################
 
+# get_os_info: Get operating system information
 get_os_info() {
     if [ -f /etc/os-release ]; then
         # shellcheck source=/dev/null
@@ -316,61 +198,126 @@ get_os_info() {
     fi
 }
 
+# get_kernel_version: Get kernel version
 get_kernel_version() {
     uname -r
 }
 
+# get_cpu_count: Get CPU core count
 get_cpu_count() {
     nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo "1"
 }
 
+# get_memory_total: Get total system memory
 get_memory_total() {
-    free -h | awk '/^Mem/ {print $2}'
+    free -h 2>/dev/null | awk '/^Mem/ {print $2}' || echo "UNKNOWN"
 }
 
-get_ip_public() {
-    curl -s https://ipinfo.io/ip 2>/dev/null || echo "UNKNOWN"
-}
-
-################################################################################
-# TIME UTILITIES
-################################################################################
-
-get_timestamp() {
-    date '+%Y-%m-%d %H:%M:%S'
-}
-
-get_timestamp_compact() {
-    date '+%Y%m%d_%H%M%S'
-}
-
-elapsed_time() {
-    local start_time="$1"
-    local end_time="${2:-$(date +%s)}"
+# get_disk_space: Check available disk space
+get_disk_space() {
+    local path="${1:-.}"
     
-    echo $((end_time - start_time))
+    df -h "$path" 2>/dev/null | tail -1 | awk '{print $4}' || echo "UNKNOWN"
 }
 
 ################################################################################
-# COMPARISON FUNCTIONS
+# CONFIGURATION FILE HANDLING - Pure read/write
 ################################################################################
 
-# Comparação numérica segura
-compare_float() {
-    local num1="$1"
-    local operator="$2"
-    local num2="$3"
+# save_config: Save variables to config file
+# Usage: save_config "/path/to/config" "VAR1" "VAR2" ...
+save_config() {
+    local config_file="$1"
+    shift
     
-    echo "$num1 $operator $num2" | bc -l
+    {
+        echo "# testdivoip configuration"
+        echo "# Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo ""
+        
+        for var in "$@"; do
+            local value="${!var}"
+            # Escape single quotes in value
+            value="${value//\'/\'\"\'\"\'}"
+            echo "export ${var}='${value}'"
+        done
+    } > "$config_file"
+    
+    [ $? -eq 0 ] && return 0 || return 1
 }
 
-# Encontrar máximo entre números
-max_of() {
-    printf '%s\n' "$@" | sort -nr | head -1
+# load_config: Load variables from config file
+# Usage: load_config "/path/to/config"
+load_config() {
+    local config_file="$1"
+    
+    if [ ! -f "$config_file" ]; then
+        return 1
+    fi
+    
+    # shellcheck source=/dev/null
+    source "$config_file" 2>/dev/null && return 0 || return 1
 }
 
-# Encontrar mínimo entre números
-min_of() {
-    printf '%s\n' "$@" | sort -n | head -1
+################################################################################
+# FILE UTILITIES - Pure operations
+################################################################################
+
+# file_exists: Check if file exists
+file_exists() {
+    [ -f "$1" ] && return 0 || return 1
+}
+
+# dir_exists: Check if directory exists
+dir_exists() {
+    [ -d "$1" ] && return 0 || return 1
+}
+
+# ensure_dir: Create directory if not exists
+ensure_dir() {
+    local dir="$1"
+    
+    [ -d "$dir" ] && return 0
+    mkdir -p "$dir" 2>/dev/null && return 0 || return 1
+}
+
+# cleanup_old_files: Remove files older than N days
+cleanup_old_files() {
+    local directory="$1"
+    local days="${2:-7}"
+    
+    if ! is_number "$days" || ! [ -d "$directory" ]; then
+        return 1
+    fi
+    
+    find "$directory" -type f -mtime "+$days" -delete 2>/dev/null && return 0 || return 1
+}
+
+################################################################################
+# GENERATE UTILITIES - IDs and identifiers
+################################################################################
+
+# generate_id: Generate unique ID with prefix
+generate_id() {
+    local prefix="${1:-id}"
+    echo "${prefix}_$(date +%s)_$$"
+}
+
+# generate_uuid_like: Generate UUID-like string
+generate_uuid_like() {
+    local output=""
+    local chars="0123456789abcdef"
+    
+    for i in {1..8}; do output="${output}${chars:$((RANDOM % 16)):1}"; done
+    output="${output}-"
+    for i in {1..4}; do output="${output}${chars:$((RANDOM % 16)):1}"; done
+    output="${output}-"
+    for i in {1..4}; do output="${output}${chars:$((RANDOM % 16)):1}"; done
+    output="${output}-"
+    for i in {1..4}; do output="${output}${chars:$((RANDOM % 16)):1}"; done
+    output="${output}-"
+    for i in {1..12}; do output="${output}${chars:$((RANDOM % 16)):1}"; done
+    
+    echo "$output"
 }
 

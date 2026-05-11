@@ -1,265 +1,153 @@
 #!/bin/bash
 
 ################################################################################
-# NETWORK TESTS - testdivoip
-# Funções para testes de rede, MTR, traceroute, ping, etc.
+# NETWORK TESTING & PARSING LAYER - network.sh
+# LOGIC LAYER: Pure parsing, extraction, calculations
+# NO presentation, NO ANSI codes, NO decorative output
+# Only raw data to stdout, errors to stderr
 ################################################################################
 
 ################################################################################
-# PING TEST
+# PING OPERATIONS
 ################################################################################
 
-ping_test() {
+# get_ping_stats_raw: returns "avg loss min max stddev" separated by space
+# NO stdout contamination, errors to stderr
+get_ping_stats_raw() {
     local target="$1"
     local count="${2:-10}"
     local timeout="${3:-5}"
     
-    log_command "ping -c $count -W $timeout $target"
+    if ! is_valid_ip "$target"; then
+        echo "" >&2
+        return 1
+    fi
     
-    ping -c "$count" -W "$timeout" "$target" 2>/dev/null
+    local output
+    output=$(ping -c "$count" -W "$timeout" "$target" 2>&1) || {
+        echo "" >&2
+        return 1
+    }
+    
+    # Extract stats from last line
+    local last_line
+    last_line=$(echo "$output" | tail -n 1)
+    
+    local avg min max stddev loss
+    avg=$(echo "$last_line" | grep -oP 'avg=\K[0-9.]+')
+    min=$(echo "$last_line" | grep -oP 'min=\K[0-9.]+')
+    max=$(echo "$last_line" | grep -oP 'max=\K[0-9.]+')
+    stddev=$(echo "$last_line" | grep -oP 'stddev=\K[0-9.]+')
+    loss=$(echo "$output" | grep -oP '[0-9.]+(?=% packet loss)' | head -1)
+    
+    # Output only raw numbers, space-separated
+    printf '%s %s %s %s %s\n' \
+        "${avg:-0}" \
+        "${loss:-0}" \
+        "${min:-0}" \
+        "${max:-0}" \
+        "${stddev:-0}"
 }
 
-get_ping_stats() {
+# Aliases for backward compatibility, but cleaner
+get_packet_loss_raw() {
     local target="$1"
     local count="${2:-10}"
     
     local output
-    output=$(ping_test "$target" "$count" 2>/dev/null | tail -n 1)
+    output=$(ping -c "$count" "$target" 2>&1) || return 1
     
-    if [ -z "$output" ]; then
-        echo "ERROR"
-        return 1
-    fi
-    
-    # Extrair: min/avg/max/stddev
-    local stats
-    stats=$(echo "$output" | grep -oP 'min=\K[0-9.]+|avg=\K[0-9.]+|max=\K[0-9.]+|stddev=\K[0-9.]+')
-    
-    echo "$stats"
-}
-
-get_packet_loss() {
-    local target="$1"
-    local count="${2:-10}"
-    
-    local output
-    output=$(ping -c "$count" "$target" 2>&1)
-    
-    if [ -z "$output" ]; then
-        echo "100"
-        return 1
-    fi
-    
-    echo "$output" | grep -oP '\K[0-9]+(?=% packet loss)'
+    echo "$output" | grep -oP '[0-9.]+(?=% packet loss)' | head -1 || echo "100"
 }
 
 ################################################################################
-# MTR TEST
+# MTR OPERATIONS - Parse only raw data
 ################################################################################
 
-mtr_test() {
+# run_mtr_raw: Execute MTR and return raw output
+run_mtr_raw() {
     local target="$1"
     local count="${2:-100}"
-    local report_file="$TEMP_DIR/mtr_${target//\./\_}_$$.txt"
     
-    print_info "Running MTR test ($count packets) to $target..."
+    if ! is_valid_ip "$target"; then
+        return 1
+    fi
     
-    log_command "mtr -rwzc $count $target"
-    
-    # Executar MTR em report mode
-    mtr -rwzc "$count" "$target" > "$report_file" 2>&1
-    
-    cat "$report_file"
+    mtr -rwzc "$count" "$target" 2>/dev/null || return 1
 }
 
-# Analisar output do MTR
-parse_mtr_output() {
+# parse_mtr_raw: Extract "loss avg best worst stddev" from MTR output
+# Returns only numbers, space-separated
+parse_mtr_raw() {
     local mtr_output="$1"
     
-    local loss=0
-    local avg=0
-    local best=0
-    local worst=0
-    local stddev=0
+    local loss avg best worst stddev
     
+    # Try primary parsing format
     loss=$(echo "$mtr_output" | grep -oP 'Loss%\s+\K[0-9.]+' | head -1)
     avg=$(echo "$mtr_output" | grep -oP 'Avg\s+\K[0-9.]+' | head -1)
     best=$(echo "$mtr_output" | grep -oP 'Best\s+\K[0-9.]+' | head -1)
     worst=$(echo "$mtr_output" | grep -oP 'Wrst\s+\K[0-9.]+' | head -1)
     stddev=$(echo "$mtr_output" | grep -oP 'Stdev\s+\K[0-9.]+' | head -1)
     
-    # Se não encontrar via parsing, tentar com formato alternativo
+    # Fallback parsing if no data found
     if [ -z "$loss" ]; then
-        loss=$(echo "$mtr_output" | awk 'NR>1 {loss=$2} END {print loss}' | grep -oP '[0-9.]+')
+        loss=$(echo "$mtr_output" | awk 'NR>1 && /^HOST/ {next} NR>1 {loss=$NF} END {print loss}' | grep -oP '[0-9.]+' | head -1)
     fi
     
-    echo "loss=${loss:-0} avg=${avg:-0} best=${best:-0} worst=${worst:-0} stddev=${stddev:-0}"
-}
-
-calculate_jitter() {
-    local stddev="$1"
-    local avg="$2"
-    
-    # Jitter = stddev da latência
-    if (( $(echo "$stddev > 0" | bc -l) )); then
-        echo "$stddev"
-    else
-        echo "0"
-    fi
+    # Output only raw numbers
+    printf '%s %s %s %s %s\n' \
+        "${loss:-0}" \
+        "${avg:-0}" \
+        "${best:-0}" \
+        "${worst:-0}" \
+        "${stddev:-0}"
 }
 
 ################################################################################
-# TRACEROUTE TEST
+# TRACEROUTE OPERATIONS - Parse only raw data
 ################################################################################
 
-traceroute_test() {
+# run_traceroute_raw: Execute traceroute and return output
+run_traceroute_raw() {
     local target="$1"
     local max_hops="${2:-30}"
     
-    print_info "Running traceroute to $target..."
-    
-    log_command "traceroute -m $max_hops -n $target"
-    
-    traceroute -m "$max_hops" -n "$target" 2>&1
-}
-
-count_hops() {
-    local traceroute_output="$1"
-    
-    # Contar linhas com IPs (não contar headers e linhas sem resposta)
-    echo "$traceroute_output" | grep -E '^\s+[0-9]+' | wc -l
-}
-
-get_last_hop_asn() {
-    local traceroute_output="$1"
-    
-    # Pegar último IP respondendo
-    local last_ip
-    last_ip=$(echo "$traceroute_output" | grep -E '^\s+[0-9]+' | tail -1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    
-    if [ -n "$last_ip" ]; then
-        get_asn_from_ip "$last_ip"
-    fi
-}
-
-################################################################################
-# ROUTE DETECTION
-################################################################################
-
-detect_international_route() {
-    local traceroute_output="$1"
-    
-    # Buscar por padrões que indicam rota internacional
-    # Level3, GTT, NTT, HE, Cogent - geralmente transporte internacional
-    
-    if echo "$traceroute_output" | grep -iqE '(level3|lumen|gtt|ntt|cogent|hurricane|telia|telefonica|ipxo)'; then
-        return 0  # true - rota internacional detectada
-    fi
-    
-    return 1  # false
-}
-
-# Contar ASNs únicos na rota
-count_asn_changes() {
-    local traceroute_output="$1"
-    
-    local ips=()
-    while IFS= read -r line; do
-        local ip
-        ip=$(echo "$line" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        [ -n "$ip" ] && ips+=("$ip")
-    done <<< "$traceroute_output"
-    
-    local asn_count=0
-    local last_asn=""
-    
-    for ip in "${ips[@]}"; do
-        local asn
-        asn=$(get_asn_from_ip "$ip")
-        if [ "$asn" != "$last_asn" ]; then
-            ((asn_count++))
-            last_asn="$asn"
-        fi
-    done
-    
-    echo "$asn_count"
-}
-
-################################################################################
-# ROUTE ANALYSIS
-################################################################################
-
-detect_route_instability() {
-    local mtr_output="$1"
-    
-    # Procurar por múltiplas entradas do mesmo hop com IPs diferentes
-    # Isto indica mudança de rota (instabilidade)
-    
-    local unstable_count=0
-    local hop_ips=()
-    
-    while IFS= read -r line; do
-        if [[ $line =~ ^\ +[0-9]+ ]]; then
-            local hop
-            hop=$(echo "$line" | awk '{print $1}')
-            local ip
-            ip=$(echo "$line" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            
-            if [ -n "$ip" ]; then
-                hop_ips+=("${hop}:${ip}")
-            fi
-        fi
-    done <<< "$mtr_output"
-    
-    # Verificar se mesmo hop tem IPs diferentes
-    declare -A seen_hops
-    for entry in "${hop_ips[@]}"; do
-        local hop=${entry%:*}
-        local ip=${entry#*:}
-        
-        if [ -n "${seen_hops[$hop]}" ] && [ "${seen_hops[$hop]}" != "$ip" ]; then
-            ((unstable_count++))
-        fi
-        seen_hops[$hop]="$ip"
-    done
-    
-    echo "$unstable_count"
-}
-
-################################################################################
-# IP INFORMATION
-################################################################################
-
-get_ipinfo() {
-    local ip="$1"
-    
-    # Usar ipinfo.io para informações do IP
-    log_command "curl -s https://ipinfo.io/$ip"
-    
-    curl -s "https://ipinfo.io/$ip" 2>/dev/null
-}
-
-get_country_from_ip() {
-    local ip="$1"
-    
-    if ! check_dependency "jq"; then
+    if ! is_valid_ip "$target"; then
         return 1
     fi
     
-    local info
-    info=$(get_ipinfo "$ip")
-    
-    echo "$info" | jq -r '.country // "UNKNOWN"' 2>/dev/null
+    traceroute -m "$max_hops" -n "$target" 2>&1 || return 1
 }
 
-get_asn_from_ip() {
+# get_hop_count: Count responsive hops from traceroute output
+get_hop_count() {
+    local traceroute_output="$1"
+    
+    # Count lines matching " N  IP" pattern
+    echo "$traceroute_output" | grep -E '^\s+[0-9]+\s' | wc -l
+}
+
+# extract_ips_from_traceroute: Get all IPs from traceroute output
+extract_ips_from_traceroute() {
+    local traceroute_output="$1"
+    
+    echo "$traceroute_output" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u
+}
+
+################################################################################
+# ASN OPERATIONS - Return only raw ASN data
+################################################################################
+
+# lookup_asn: Query WHOIS for ASN of given IP
+# Returns: "ASXXXX" or "UNKNOWN"
+lookup_asn() {
     local ip="$1"
     
-    if ! check_dependency "whois"; then
+    if ! is_valid_ip "$ip"; then
+        echo "UNKNOWN"
         return 1
     fi
-    
-    log_command "whois -h whois.asn.cymru.com -- '-v $ip'"
     
     local result
     result=$(whois -h whois.asn.cymru.com -- "-v $ip" 2>/dev/null | grep -oP 'AS\K[0-9]+' | head -1)
@@ -271,78 +159,137 @@ get_asn_from_ip() {
     fi
 }
 
-get_asn_name() {
+# lookup_asn_name: Query WHOIS for ASN name/organization
+# Returns: Organization name (may be multiple words)
+lookup_asn_name() {
     local asn="$1"
-    
-    if ! check_dependency "whois"; then
-        return 1
-    fi
-    
-    log_command "whois -h whois.asn.cymru.com $asn"
     
     whois -h whois.asn.cymru.com "$asn" 2>/dev/null | head -1 | awk '{print $4, $5, $6, $7}'
 }
 
-get_asn_info() {
-    local asn="$1"
-    
-    # Extrair informações mais completas sobre ASN
-    log_command "whois AS${asn#AS}"
-    
-    whois "AS${asn#AS}" 2>/dev/null
-}
-
 ################################################################################
-# DNS RESOLUTION
+# DNS OPERATIONS - Return only raw DNS data
 ################################################################################
 
-dns_lookup() {
+# forward_dns: Resolve hostname to IP
+# Returns: IP address or "UNKNOWN"
+forward_dns() {
     local hostname="$1"
     
-    if ! check_dependency "dig"; then
-        return 1
-    fi
+    local result
+    result=$(dig +short "$hostname" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
     
-    log_command "dig +short $hostname"
-    
-    dig +short "$hostname" 2>/dev/null
+    [ -n "$result" ] && echo "$result" || echo "UNKNOWN"
 }
 
+# reverse_dns: Reverse resolve IP to hostname
+# Returns: hostname or "UNKNOWN"
 reverse_dns() {
     local ip="$1"
     
-    if ! check_dependency "dig"; then
+    if ! is_valid_ip "$ip"; then
+        echo "UNKNOWN"
         return 1
     fi
     
-    log_command "dig -x $ip +short"
+    local result
+    result=$(dig -x "$ip" +short 2>/dev/null | head -1 | sed 's/\.$//')
     
-    dig -x "$ip" +short 2>/dev/null | head -1
+    [ -n "$result" ] && echo "$result" || echo "UNKNOWN"
 }
 
 ################################################################################
-# NETWORK CONNECTIVITY
+# ROUTE ANALYSIS - Return only numeric metrics
 ################################################################################
 
-test_connectivity() {
-    local target="$1"
-    local port="${2:-80}"
+# count_asn_changes: Count unique ASN transitions in route
+# Returns: Number of ASN changes
+count_asn_changes() {
+    local traceroute_output="$1"
     
-    if ! check_dependency "nc"; then
-        # Usar bash native timeout com /dev/tcp
-        timeout 3 bash -c "</dev/tcp/$target/$port" 2>/dev/null && return 0 || return 1
-    else
-        nc -zw3 "$target" "$port" 2>/dev/null && return 0 || return 1
+    local ips=()
+    while IFS= read -r ip; do
+        if is_valid_ip "$ip"; then
+            ips+=("$ip")
+        fi
+    done < <(extract_ips_from_traceroute "$traceroute_output")
+    
+    if [ ${#ips[@]} -eq 0 ]; then
+        echo "0"
+        return 0
     fi
+    
+    local asn_count=0
+    local last_asn=""
+    
+    for ip in "${ips[@]}"; do
+        local asn
+        asn=$(lookup_asn "$ip")
+        if [ "$asn" != "$last_asn" ]; then
+            ((asn_count++))
+            last_asn="$asn"
+        fi
+    done
+    
+    echo "$asn_count"
 }
 
-test_port() {
-    local host="$1"
-    local port="$2"
-    local timeout="${3:-5}"
+# detect_route_instability: Detect BGP flapping/route changes
+# Returns: Number of instability indicators
+detect_route_instability() {
+    local traceroute_output="$1"
     
-    log_command "curl -s -m $timeout http://$host:$port"
+    local unstable_count=0
+    declare -A seen_hops
     
-    curl -s -m "$timeout" "http://$host:$port" &>/dev/null && return 0 || return 1
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]+([0-9]+)[[:space:]]+(.*) ]]; then
+            local hop="${BASH_REMATCH[1]}"
+            local ips
+            ips=$(echo "${BASH_REMATCH[2]}" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+            
+            for ip in $ips; do
+                if is_valid_ip "$ip"; then
+                    if [ -n "${seen_hops[$hop]}" ] && [ "${seen_hops[$hop]}" != "$ip" ]; then
+                        ((unstable_count++))
+                    fi
+                    seen_hops[$hop]="$ip"
+                fi
+            done
+        fi
+    done <<< "$traceroute_output"
+    
+    echo "$unstable_count"
+}
+
+# is_international_route: Detect international transit ASNs
+# Returns: 0 (international) or 1 (domestic)
+is_international_route() {
+    local traceroute_output="$1"
+    
+    # Pattern: known international transit carriers
+    local international_patterns="(level3|lumen|gtt|ntt|cogent|hurricane|telia|telefonica|ipxo|gtc|zayo)"
+    
+    if echo "$traceroute_output" | grep -iqE "$international_patterns"; then
+        return 0  # International
+    fi
+    return 1  # Domestic
+}
+
+################################################################################
+# CONNECTIVITY TESTS - Return status only
+################################################################################
+
+# test_ip_reachable: Check if IP responds to ping
+# Returns: 0 (reachable) or 1 (unreachable)
+test_ip_reachable() {
+    local target="$1"
+    local timeout="${2:-5}"
+    
+    if ! is_valid_ip "$target"; then
+        return 1
+    fi
+    
+    ping -c 1 -W "$timeout" "$target" &>/dev/null && return 0 || return 1
 }
 
