@@ -18,6 +18,34 @@ if [ -n "${_MTR_ANALYSIS_LOADED:-}" ]; then
 fi
 _MTR_ANALYSIS_LOADED=1
 
+# Ensure dependency: is_valid_ip exists. If not, try to source logging.sh from same dir,
+# otherwise provide a minimal fallback implementation so the module can be sourced
+# standalone for quick testing.
+if ! type is_valid_ip >/dev/null 2>&1; then
+    # locate this file's directory
+    _MTR_ANALYSIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "${_MTR_ANALYSIS_DIR}/logging.sh" ]; then
+        # shellcheck source=/dev/null
+        . "${_MTR_ANALYSIS_DIR}/logging.sh"
+    fi
+fi
+
+if ! type is_valid_ip >/dev/null 2>&1; then
+    is_valid_ip() {
+        local ip="$1"
+        local ipv4_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+        if [[ $ip =~ $ipv4_regex ]]; then
+            for octet in ${ip//./ }; do
+                if ((octet > 255)); then
+                    return 1
+                fi
+            done
+            return 0
+        fi
+        return 1
+    }
+fi
+
 # collect_mtr_metrics: run MTR and parse destination line
 # Output: space-separated: loss avg best worst stdev hops
 collect_mtr_metrics() {
