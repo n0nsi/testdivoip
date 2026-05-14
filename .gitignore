@@ -1,0 +1,13 @@
+.logs/
+.reports/
+logs/
+reports/
+temp/
+.temp/
+*.log
+
+config/*.conf
+config/**/*.conf
+!config/example.conf
+!config/*.sample.conf
+!config/*.example.conf

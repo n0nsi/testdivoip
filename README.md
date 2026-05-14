@@ -203,7 +203,25 @@ The tool will guide you through:
 
 ### Configuration File Format
 
-Create a `.conf` file in the `config/` directory:
+The repository ships with a single tracked template: `config/example.conf`.
+
+For real customer deployments, copy that template to a local file under `config/` and keep it out of git. The repository `.gitignore` is configured to ignore customer-specific `.conf` files while keeping the example template available.
+
+Recommended workflow:
+
+```bash
+cp config/example.conf config/mycompany.conf
+```
+
+Then edit only the local copy and run:
+
+```bash
+./testdivoip.sh --config config/mycompany.conf
+```
+
+Do not commit customer-specific names, IPs, office locations, or trunk details into tracked files.
+
+Create a `.conf` file in the `config/` directory only for local use:
 
 ```bash
 #!/bin/bash
@@ -308,44 +326,63 @@ The tool analyzes factors that specifically impact VoIP:
    - Cogent, Level3, GTT: common transit issues
    - Multiple ASN changes = routing complexity
 
-## Report Structure
+## Output Files
 
-### Report Sections
+### Shareable TXT Summary
 
-1. **General Information**
-   - Client name, scenario, cloud provider
-   - PABX IP, server hostname, kernel version
+The main deliverable is a plain TXT file that can be sent to a client or attached to a ticket.
 
-2. **Office Location Analysis**
-   - Per-office metrics and scores
-   - Individual VoIP quality assessment
+It includes:
 
-3. **SIP Trunk Carrier Analysis**
-   - Per-carrier connectivity metrics
-   - Route stability analysis
+1. **Execution Summary**
+   - Client, scenario, cloud provider, PABX IP
+   - Overall VoIP score and classification
 
-4. **Findings & Analysis**
-   - Key findings from testing
-   - Identified issues and patterns
+2. **Office Analysis**
+   - Per-office scores and route metrics
 
-5. **Recommendations**
-   - Priority-based action items
-   - Configuration suggestions
+3. **SIP Trunk Analysis**
+   - Per-trunk scores and route metrics
 
-6. **Overall Conclusion**
-   - Summary quality score
-   - Production readiness assessment
+4. **Findings & Recommendations**
+   - Human-readable summary for operational review
 
-7. **Technical Details**
-   - Raw MTR reports
-   - Traceroute outputs
-   - ASN chain analysis
+5. **Technical Details**
+   - Link to the internal audit log
 
-### Report Location
+### Audit Log
 
-Reports are saved to: `reports/CLIENT_YYYYMMDD_HHMMSS.txt`
+The internal audit log is separate from the TXT summary and captures line-by-line evidence.
 
-Example: `reports/ACME_20240315_143022.txt`
+It includes:
+
+1. **Execution Metadata**
+   - Run timestamp and execution context
+   - Local-only operational metadata
+
+2. **Ping Evidence**
+   - One log line per packet/sequence
+   - Reply time, TTL, source IP, and timeout status
+
+3. **Traceroute Evidence**
+   - One log line per hop
+   - Hop number, observed IPs, RTT samples, and raw hop line
+
+4. **MTR Evidence**
+   - Aggregate path-quality snapshot for the target
+
+5. **Risk Summary**
+   - Numeric VoIP score
+   - Risk level and confidence
+   - Final audit summary for contesting decisions later
+
+### File Locations
+
+Shareable TXT summaries are saved to: `reports/CLIENT_YYYYMMDD_HHMMSS.txt`
+
+Audit logs are saved to: `logs/testdivoip_audit_YYYYMMDD_HHMMSS.log`
+
+Both paths are intentionally local-only and excluded from version control.
 
 ## Troubleshooting
 
@@ -421,7 +458,7 @@ ls -la functions/
 
 - **No passwords stored** - configuration files use environment variables
 - **No sensitive data** - only uses public WHOIS/DNS services
-- **Local logging** - all data stays in reports/ and logs/ directories
+- **Local logging** - all data stays in ignored local log files under logs/
 - **Root not required** - runs as regular user
 - **Firewall friendly** - uses standard ICMP and DNS protocols
 
@@ -485,6 +522,12 @@ echo "$result"
 ### Log Files
 
 Logs are created in: `logs/testdivoip_YYYYMMDD_HHMMSS.log`
+
+Audit evidence is created in: `logs/testdivoip_audit_YYYYMMDD_HHMMSS.log`
+
+Shareable TXT summaries are created in: `reports/CLIENT_YYYYMMDD_HHMMSS.txt`
+
+Both paths are ignored by git and must never be committed.
 
 ### Log Levels
 

@@ -11,6 +11,19 @@
 # PING OPERATIONS
 ################################################################################
 
+# run_ping_raw: Execute ping and return full output for auditing/parsing
+run_ping_raw() {
+    local target="$1"
+    local count="${2:-10}"
+    local timeout="${3:-5}"
+
+    if ! is_valid_ip "$target"; then
+        return 1
+    fi
+
+    ping -c "$count" -W "$timeout" -n "$target" 2>&1 || return 1
+}
+
 # get_ping_stats_raw: returns "avg loss min max stddev" separated by space
 # NO stdout contamination, errors to stderr
 # Handles multiple ping output formats (GNU, BSD, busybox)
@@ -18,17 +31,19 @@ get_ping_stats_raw() {
     local target="$1"
     local count="${2:-10}"
     local timeout="${3:-5}"
+    local output="${4:-}"
     
     if ! is_valid_ip "$target"; then
         echo "" >&2
         return 1
     fi
     
-    local output
-    output=$(ping -c "$count" -W "$timeout" "$target" 2>&1) || {
-        echo "" >&2
-        return 1
-    }
+    if [ -z "$output" ]; then
+        output=$(ping -c "$count" -W "$timeout" -n "$target" 2>&1) || {
+            echo "" >&2
+            return 1
+        }
+    fi
     
     # Extract loss first (consistent across formats)
     local loss

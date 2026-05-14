@@ -7,6 +7,18 @@
 
 REPORTS_DIR="${REPORTS_DIR:-.reports}"
 
+sanitize_filename_component() {
+    local value="$1"
+
+    value="${value//[^A-Za-z0-9._-]/_}"
+    value="${value//__/_}"
+    value="${value##_}"
+    value="${value%%_}"
+
+    [[ -n "$value" ]] || value="report"
+    printf '%s' "$value"
+}
+
 ################################################################################
 # REPORT INITIALIZATION
 ################################################################################
@@ -15,8 +27,12 @@ init_report() {
     local client_name="$1"
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
+    local safe_client_name
+    safe_client_name="$(sanitize_filename_component "$client_name")"
     
-    REPORT_FILE="${REPORTS_DIR}/${client_name}_${timestamp}.txt"
+    umask 077
+
+    REPORT_FILE="${REPORTS_DIR}/${safe_client_name}_${timestamp}.txt"
     
     mkdir -p "$REPORTS_DIR"
     
@@ -111,10 +127,7 @@ add_general_information() {
     add_report_metric "PABX IP" "$pabx_ip"
     add_report_blank
     
-    # Server Information
-    add_report_subsection "Server Information"
-    add_report_metric "Hostname" "$(hostname)"
-    add_report_metric "Server IP" "$(hostname -I | awk '{print $1}')"
+    add_report_subsection "Execution Metadata"
     add_report_metric "Kernel" "$(uname -r)"
     add_report_metric "Uptime" "$(uptime -p)"
     add_report_metric "Timestamp" "$(date '+%Y-%m-%d %H:%M:%S %Z')"

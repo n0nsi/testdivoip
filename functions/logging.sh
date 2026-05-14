@@ -10,25 +10,107 @@
 # - NO print_success/print_error functions here
 ################################################################################
 
-LOG_DIR="${LOG_DIR:-.logs}"
-TEMP_DIR="${TEMP_DIR:-.temp}"
+LOG_DIR="${LOG_DIR:-logs}"
+TEMP_DIR="${TEMP_DIR:-temp}"
 LOG_FILE=""
+AUDIT_LOG_FILE=""
 
 ################################################################################
 # INITIALIZE LOGGING
 ################################################################################
 
 init_logging() {
+    umask 077
+
     mkdir -p "$LOG_DIR" "$TEMP_DIR" 2>/dev/null || return 1
     LOG_FILE="${LOG_DIR}/testdivoip_$(date +%Y%m%d_%H%M%S).log"
     touch "$LOG_FILE" 2>/dev/null || return 1
     
     {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] === TESTDIVOIP Started ==="
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] PID: $$"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] User: $(whoami)"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Host: $(hostname)"
     } >> "$LOG_FILE" 2>/dev/null
+}
+
+init_audit_log() {
+    umask 077
+
+    mkdir -p "$LOG_DIR" "$TEMP_DIR" 2>/dev/null || return 1
+    AUDIT_LOG_FILE="${LOG_DIR}/testdivoip_audit_$(date +%Y%m%d_%H%M%S).log"
+    touch "$AUDIT_LOG_FILE" 2>/dev/null || return 1
+
+    {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [AUDIT] TESTDIVOIP execution started"
+    } >> "$AUDIT_LOG_FILE" 2>/dev/null
+}
+
+audit_log_event() {
+    local task="$1"
+    local message="$2"
+
+    [ -z "$AUDIT_LOG_FILE" ] && return 0
+    printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$task" "$message" >> "$AUDIT_LOG_FILE" 2>/dev/null
+}
+
+audit_log_ping_output() {
+    local target="$1"
+    local count="$2"
+    local ping_output="$3"
+
+    [ -z "$AUDIT_LOG_FILE" ] && return 0
+
+    audit_log_event "PING" "target=$target packets=$count"
+
+    local seq_details=()
+    local line seq ttl time_ms bytes source
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ icmp_seq=([0-9]+) ]]; then
+            seq="${BASH_REMATCH[1]}"
+            bytes=$(echo "$line" | grep -oP '^[0-9]+' | head -1)
+            ttl=$(echo "$line" | grep -oP 'ttl=\K[0-9]+' | head -1)
+            time_ms=$(echo "$line" | grep -oP 'time=\K[0-9.]+(?=\s*ms)' | head -1)
+            source=$(echo "$line" | grep -oP '(?<=from )[0-9]+(?:\.[0-9]+){3}' | head -1)
+            seq_details[$seq]="bytes=${bytes:-64}|ttl=${ttl:-0}|time_ms=${time_ms:-0}|source=${source:-UNKNOWN}|raw=${line}"
+        fi
+    done <<< "$ping_output"
+
+    local seq_index
+    for ((seq_index=1; seq_index<=count; seq_index++)); do
+        if [ -n "${seq_details[$seq_index]}" ]; then
+            audit_log_event "PING" "seq=$seq_index status=reply ${seq_details[$seq_index]}"
+        else
+            audit_log_event "PING" "seq=$seq_index status=timeout"
+        fi
+    done
+}
+
+audit_log_traceroute_output() {
+    local target="$1"
+    local traceroute_output="$2"
+
+    [ -z "$AUDIT_LOG_FILE" ] && return 0
+
+    audit_log_event "TRACEROUTE" "target=$target"
+
+    local line hop ips times
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]]+(.*)$ ]]; then
+            hop="${BASH_REMATCH[1]}"
+            ips=$(echo "$line" | grep -oP '[0-9]+(?:\.[0-9]+){3}' | tr '\n' ',' | sed 's/,$//')
+            times=$(echo "$line" | grep -oP '[0-9.]+(?=\s*ms)' | tr '\n' ',' | sed 's/,$//')
+            audit_log_event "TRACEROUTE" "hop=$hop ips=${ips:-UNKNOWN} times_ms=${times:-UNKNOWN} raw=${line}"
+        fi
+    done <<< "$traceroute_output"
+}
+
+audit_log_summary() {
+    local target="$1"
+    local score="$2"
+    local category="$3"
+    local risk_level="$4"
+    local confidence="$5"
+
+    audit_log_event "SUMMARY" "target=$target score=$score category=$category risk=$risk_level confidence=$confidence"
 }
 
 ################################################################################

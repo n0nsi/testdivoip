@@ -198,26 +198,147 @@ parse_arguments() {
 ################################################################################
 
 initialize_environment() {
+    umask 077
+
     # Create necessary directories
     mkdir -p "$REPORTS_DIR" "$LOGS_DIR" "$TEMP_DIR" "$CONFIG_DIR"
+
+    LOG_DIR="$LOGS_DIR"
     
     # Initialize logging
     init_logging
+    init_audit_log
     
     log_info "=== TESTDIVOIP STARTED ==="
-    log_info "Script directory: $SCRIPT_DIR"
+    log_debug "Script directory: $SCRIPT_DIR"
     log_info "Debug mode: $DEBUG"
     log_info "Verbose mode: $VERBOSE"
+}
+
+reset_configuration_defaults() {
+    CLIENT_NAME=""
+    SCENARIO_NAME=""
+    CLOUD_PROVIDER=""
+    PABX_IP=""
+
+    OFFICE_NAMES=()
+    OFFICE_IPS=()
+    TRUNK_NAMES=()
+    TRUNK_IPS=()
+}
+
+trim_whitespace() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+strip_quotes() {
+    local value
+    value="$(trim_whitespace "$1")"
+
+    if [[ ${#value} -ge 2 ]]; then
+        if [[ ("${value:0:1}" == '"' && "${value: -1}" == '"') || ("${value:0:1}" == "'" && "${value: -1}" == "'") ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+    fi
+
+    printf '%s' "$value"
+}
+
+set_config_scalar() {
+    local key="$1"
+    local value="$2"
+
+    case "$key" in
+        CLIENT_NAME) CLIENT_NAME="$value" ;;
+        SCENARIO_NAME) SCENARIO_NAME="$value" ;;
+        CLOUD_PROVIDER) CLOUD_PROVIDER="$value" ;;
+        PABX_IP) PABX_IP="$value" ;;
+        MTR_PACKETS) MTR_PACKETS="$value" ;;
+        VERBOSE) VERBOSE="$value" ;;
+        DEBUG) DEBUG="$value" ;;
+    esac
+}
+
+append_config_array_item() {
+    local key="$1"
+    local value="$2"
+
+    case "$key" in
+        OFFICE_NAMES) OFFICE_NAMES+=("$value") ;;
+        OFFICE_IPS) OFFICE_IPS+=("$value") ;;
+        TRUNK_NAMES) TRUNK_NAMES+=("$value") ;;
+        TRUNK_IPS) TRUNK_IPS+=("$value") ;;
+    esac
+}
+
+load_configuration_file() {
+    local config_path="$1"
+    local in_array=""
+    local raw_line cleaned_line key value
+
+    reset_configuration_defaults
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        cleaned_line="$(trim_whitespace "$raw_line")"
+
+        [[ -z "$cleaned_line" || "$cleaned_line" == \#* ]] && continue
+
+        if [[ -n "$in_array" ]]; then
+            if [[ "$cleaned_line" == ")" ]]; then
+                in_array=""
+                continue
+            fi
+
+            value="${cleaned_line%%#*}"
+            value="$(strip_quotes "$value")"
+            [[ -n "$value" ]] && append_config_array_item "$in_array" "$value"
+            continue
+        fi
+
+        if [[ "$cleaned_line" == declare\ -a* ]]; then
+            cleaned_line="${cleaned_line#declare -a }"
+            cleaned_line="$(trim_whitespace "$cleaned_line")"
+        fi
+
+        if [[ "$cleaned_line" == export\ * ]]; then
+            cleaned_line="${cleaned_line#export }"
+            cleaned_line="$(trim_whitespace "$cleaned_line")"
+        fi
+
+        if [[ "$cleaned_line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=\($ ]]; then
+            in_array="${BASH_REMATCH[1]}"
+            continue
+        fi
+
+        if [[ "$cleaned_line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=\((.*)\)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            value="${value%%#*}"
+            value="$(strip_quotes "$value")"
+            [[ -n "$value" ]] && append_config_array_item "$key" "$value"
+            continue
+        fi
+
+        if [[ "$cleaned_line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            value="${value%%#*}"
+            value="$(strip_quotes "$value")"
+            set_config_scalar "$key" "$value"
+        fi
+    done < "$config_path"
 }
 
 load_configuration() {
     if [[ -n "$CONFIG_FILE" ]]; then
         if [[ -f "$CONFIG_FILE" ]]; then
             ui_print_info "Loading configuration: $CONFIG_FILE"
-            
-            # shellcheck source=/dev/null
-            source "$CONFIG_FILE"
-            
+
+            load_configuration_file "$CONFIG_FILE"
+
             ui_print_success "Configuration loaded"
         else
             ui_print_error "Configuration file not found: $CONFIG_FILE"
@@ -432,10 +553,12 @@ run_complete_analysis() {
     local target_name="$2"
     
     ui_print_subheader "Testing: $target_name ($target)"
+    audit_log_event "TARGET" "name=$target_name ip=$target status=start"
     
     # Validate target is reachable
     if ! test_ip_reachable "$target" 5; then
         ui_print_error "Target unreachable: $target"
+        audit_log_event "TARGET" "name=$target_name ip=$target status=unreachable"
         return 1
     fi
     
@@ -446,19 +569,29 @@ run_complete_analysis() {
     # Run Ping Test
     ui_print_info "Running ping test (10 packets)..."
     local ping_stats
-    ping_stats=$(get_ping_stats_raw "$target" 10)
+    local ping_output
+    ping_output=$(run_ping_raw "$target" 10)
     
-    if [ -z "$ping_stats" ]; then
+    if [ -z "$ping_output" ]; then
         ui_print_error "Ping test failed"
+        audit_log_event "PING" "target=$target status=failed"
         return 1
     fi
+
+    audit_log_ping_output "$target" 10 "$ping_output"
+    ping_stats=$(get_ping_stats_raw "$target" 10 5 "$ping_output")
     
     # Parse ping results: "avg loss min max stddev"
     latency=$(echo "$ping_stats" | awk '{print $1}')
     loss=$(echo "$ping_stats" | awk '{print $2}')
+    local ping_min ping_max ping_stddev
+    ping_min=$(echo "$ping_stats" | awk '{print $3}')
+    ping_max=$(echo "$ping_stats" | awk '{print $4}')
+    ping_stddev=$(echo "$ping_stats" | awk '{print $5}')
     
     ui_print_metric "Average RTT" "$latency" "ms"
     ui_print_metric "Packet Loss" "$loss" "%"
+    audit_log_event "PING" "target=$target avg_ms=$latency loss_pct=$loss min_ms=$ping_min max_ms=$ping_max stddev_ms=$ping_stddev"
     
     # Run MTR Test
     ui_print_info "Running MTR (100 packets)..."
@@ -471,6 +604,7 @@ run_complete_analysis() {
     fi
     
     ui_print_success "MTR completed"
+    audit_log_event "MTR" "target=$target packets=100 lines=$(printf '%s\n' "$mtr_output" | wc -l | awk '{print $1}')"
     
     # Run Traceroute
     ui_print_info "Running traceroute..."
@@ -479,11 +613,13 @@ run_complete_analysis() {
     
     if [ -z "$traceroute_output" ]; then
         ui_print_error "Traceroute failed"
+        audit_log_event "TRACEROUTE" "target=$target status=failed"
         return 1
     fi
     
     hops=$(get_hop_count "$traceroute_output")
     ui_print_metric "Hop Count" "$hops" "hops"
+    audit_log_traceroute_output "$target" "$traceroute_output"
     
     # ASN Analysis
     ui_print_info "Running ASN analysis..."
@@ -513,7 +649,14 @@ run_complete_analysis() {
     # Extract jitter from MTR
     local mtr_metrics
     mtr_metrics=$(parse_mtr_raw "$mtr_output")
-    jitter=$(echo "$mtr_metrics" | awk '{print $4}')  # Best value as jitter proxy
+    local mtr_loss mtr_avg mtr_best mtr_worst mtr_stddev
+    mtr_loss=$(echo "$mtr_metrics" | awk '{print $1}')
+    mtr_avg=$(echo "$mtr_metrics" | awk '{print $2}')
+    mtr_best=$(echo "$mtr_metrics" | awk '{print $3}')
+    mtr_worst=$(echo "$mtr_metrics" | awk '{print $4}')
+    mtr_stddev=$(echo "$mtr_metrics" | awk '{print $5}')
+    jitter="$mtr_stddev"
+    audit_log_event "MTR" "target=$target loss_pct=$mtr_loss avg_ms=$mtr_avg best_ms=$mtr_best worst_ms=$mtr_worst stddev_ms=$mtr_stddev"
     
     # === RISK ASSESSMENT ENGINE ===
     ui_print_subheader "VoIP Quality Assessment"
@@ -556,6 +699,10 @@ run_complete_analysis() {
             [ -n "$reason" ] && printf '  • %s\n' "$reason"
         done
     fi
+
+    local score
+    score=$(calculate_voip_score "$latency" "$jitter" "$loss" "$hops" "$asn_suspicious" "$international")
+    audit_log_summary "$target" "$score" "$(classify_voip_quality "$score")" "$risk_level" "$risk_confidence"
     
     # Show provider-specific recommendations
     local carriers
@@ -569,7 +716,7 @@ run_complete_analysis() {
     fi
     
     # Return results as pipe-separated values (include risk assessment)
-    echo "$risk_level|$risk_confidence|$risk_reasons|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international"
+    echo "$score|$risk_level|$risk_confidence|$risk_reasons|$latency|$jitter|$loss|$hops|$primary_asn|$asn_suspicious|$international"
 }
 
 run_all_tests() {
@@ -584,7 +731,7 @@ run_all_tests() {
         if [ $? -eq 0 ]; then
             OFFICE_RESULTS+=("$result")
         else
-            OFFICE_RESULTS+=("0|CRÍTICO|0|0|100|0|UNKNOWN|1|0")
+            OFFICE_RESULTS+=("0|CRÍTICO|0|Target unreachable|100|0|100|0|UNKNOWN|1|0")
             ui_print_error "Analysis failed for ${OFFICE_NAMES[$i]}"
         fi
         
@@ -600,7 +747,7 @@ run_all_tests() {
         if [ $? -eq 0 ]; then
             TRUNK_RESULTS+=("$result")
         else
-            TRUNK_RESULTS+=("0|CRÍTICO|0|0|100|0|UNKNOWN|1|0")
+            TRUNK_RESULTS+=("0|CRÍTICO|0|Target unreachable|100|0|100|0|UNKNOWN|1|0")
             ui_print_error "Analysis failed for ${TRUNK_NAMES[$i]}"
         fi
         
@@ -616,7 +763,7 @@ run_all_tests() {
 ################################################################################
 
 generate_final_report() {
-    ui_print_header "GENERATING COMPREHENSIVE REPORT"
+    ui_print_header "GENERATING AUDIT SUMMARY"
     
     # Calculate overall score
     local total_score=0
@@ -640,12 +787,80 @@ generate_final_report() {
         
         ui_print_subheader "Overall Assessment"
         ui_show_quality_status "$overall_category" "$overall_score"
+        audit_log_summary "OVERALL" "$overall_score" "$overall_category" "$overall_category" "n/a"
+
+        init_report "$CLIENT_NAME"
+        add_general_information "$CLIENT_NAME" "$CLOUD_PROVIDER" "$PABX_IP" "$SCENARIO_NAME"
+
+        add_report_section "EXECUTION SUMMARY"
+        add_report_metric "Audit Log" "$AUDIT_LOG_FILE"
+        add_report_metric "Targets Analyzed" "$total_tests"
+        add_report_metric "Overall VoIP Score" "$overall_score/100"
+        add_report_metric "Classification" "$overall_category"
+        add_report_blank
+
+        add_report_section "OFFICE ANALYSIS"
+        for i in "${!OFFICE_RESULTS[@]}"; do
+            local score risk_level risk_confidence risk_reasons latency jitter loss hops primary_asn asn_suspicious international
+            IFS='|' read -r score risk_level risk_confidence risk_reasons latency jitter loss hops primary_asn asn_suspicious international <<< "${OFFICE_RESULTS[$i]}"
+
+            add_office_analysis "${OFFICE_NAMES[$i]}" "${OFFICE_IPS[$i]}" "$latency" "$jitter" "$loss" "$hops" "$primary_asn" "$score" "$(classify_voip_quality "$score")"
+
+            case "$risk_level" in
+                high|high-risk|CRÍTICO|CRITICO)
+                    add_finding "CRITICAL" "${OFFICE_NAMES[$i]}" "${risk_reasons:-High risk detected.}" ;;
+                medium-high|medium)
+                    add_finding "WARNING" "${OFFICE_NAMES[$i]}" "${risk_reasons:-Moderate risk detected.}" ;;
+                *)
+                    add_finding "OK" "${OFFICE_NAMES[$i]}" "${risk_reasons:-Route acceptable for VoIP.}" ;;
+            esac
+        done
+
+        add_report_section "SIP TRUNK ANALYSIS"
+        for i in "${!TRUNK_RESULTS[@]}"; do
+            local score risk_level risk_confidence risk_reasons latency jitter loss hops primary_asn asn_suspicious international
+            IFS='|' read -r score risk_level risk_confidence risk_reasons latency jitter loss hops primary_asn asn_suspicious international <<< "${TRUNK_RESULTS[$i]}"
+
+            add_sip_trunk_analysis "${TRUNK_NAMES[$i]}" "${TRUNK_IPS[$i]}" "$latency" "$jitter" "$loss" "$hops" "$primary_asn" "$score" "$(classify_voip_quality "$score")"
+
+            case "$risk_level" in
+                high|high-risk|CRÍTICO|CRITICO)
+                    add_finding "CRITICAL" "${TRUNK_NAMES[$i]}" "${risk_reasons:-High risk detected.}" ;;
+                medium-high|medium)
+                    add_finding "WARNING" "${TRUNK_NAMES[$i]}" "${risk_reasons:-Moderate risk detected.}" ;;
+                *)
+                    add_finding "OK" "${TRUNK_NAMES[$i]}" "${risk_reasons:-Route acceptable for VoIP.}" ;;
+            esac
+        done
+
+        add_recommendations_section
+        if [ "$overall_category" = "CRÍTICO" ]; then
+            add_recommendation "HIGH" "Review carrier routing, packet loss, and hop-by-hop evidence in the audit log before production use."
+        elif [ "$overall_category" = "ATENÇÃO" ]; then
+            add_recommendation "MEDIUM" "Keep monitoring the route and compare results across peak and off-peak windows."
+        else
+            add_recommendation "LOW" "The route is acceptable, but keep the audit log for future comparison."
+        fi
+
+        add_conclusion_section "$overall_score" "$overall_category"
+
+        add_technical_details_section
+        add_report_text "Detailed audit log: ${AUDIT_LOG_FILE:-unknown}"
+        add_report_text "This report is the shareable summary; the audit log is the technical evidence trail."
+
+        print_report_path
+        audit_log_event "REPORT" "summary_report=$REPORT_FILE"
     else
-        ui_print_error "No valid test results to generate report"
-        return 1
+        ui_print_warning "No valid test results to summarize"
+        audit_log_event "SUMMARY" "no_valid_test_results"
     fi
     
-    ui_print_success "Report generation complete"
+    if [ -n "$AUDIT_LOG_FILE" ]; then
+        ui_print_info "Audit log written to: $AUDIT_LOG_FILE"
+        audit_log_event "AUDIT" "log_file=$AUDIT_LOG_FILE"
+    fi
+
+    ui_print_success "Summary report and audit log complete"
 }
 
 ################################################################################
