@@ -210,6 +210,22 @@ initialize_environment() {
     log_info "Verbose mode: $VERBOSE"
 }
 
+load_configuration() {
+    if [[ -n "$CONFIG_FILE" ]]; then
+        if [[ -f "$CONFIG_FILE" ]]; then
+            ui_print_info "Loading configuration: $CONFIG_FILE"
+            
+            # shellcheck source=/dev/null
+            source "$CONFIG_FILE"
+            
+            ui_print_success "Configuration loaded"
+        else
+            ui_print_error "Configuration file not found: $CONFIG_FILE"
+            exit 1
+        fi
+    fi
+}
+
 show_startup_checks() {
     ui_print_header "TESTDIVOIP v1.0 - VoIP Route Quality Analysis" "=" 60
     
@@ -232,9 +248,9 @@ show_startup_checks() {
 collect_general_info() {
     ui_print_header "GENERAL INFORMATION"
     
-    CLIENT_NAME=$(ui_prompt_text "Client Name" "MyCompany")
-    SCENARIO_NAME=$(ui_prompt_text "Scenario Name" "Production VoIP")
-    CLOUD_PROVIDER=$(ui_prompt_text "Cloud Provider" "AWS/Azure/DigitalOcean")
+    CLIENT_NAME=$(ui_prompt_text "Client Name" "${CLIENT_NAME:-MyCompany}")
+    SCENARIO_NAME=$(ui_prompt_text "Scenario Name" "${SCENARIO_NAME:-Production VoIP}")
+    CLOUD_PROVIDER=$(ui_prompt_text "Cloud Provider" "${CLOUD_PROVIDER:-AWS/Azure/DigitalOcean}")
     
     ui_print_success "General information collected"
 }
@@ -242,48 +258,56 @@ collect_general_info() {
 collect_pabx_info() {
     ui_print_header "PABX INFORMATION"
     
-    PABX_IP=$(ui_prompt_ip "PABX IP Address")
+    PABX_IP=$(ui_prompt_ip "PABX IP Address" "${PABX_IP:-}")
     ui_print_success "PABX IP: $PABX_IP"
 }
 
 collect_office_info() {
     ui_print_header "OFFICE LOCATIONS"
     
-    local num_offices
-    num_offices=$(ui_prompt_number "How many office locations?" "1")
-    
-    for ((i=1; i<=num_offices; i++)); do
-        ui_print_subheader "Office #$i"
+    if [[ ${#OFFICE_NAMES[@]} -eq 0 ]]; then
+        local num_offices
+        num_offices=$(ui_prompt_number "How many office locations?" "1")
         
-        local office_name office_ip
-        office_name=$(ui_prompt_text "Office name" "Branch-$i")
-        office_ip=$(ui_prompt_ip "Office IP address")
-        
-        OFFICE_NAMES+=("$office_name")
-        OFFICE_IPS+=("$office_ip")
-        
-        ui_print_success "Added: $office_name ($office_ip)"
-    done
+        for ((i=1; i<=num_offices; i++)); do
+            ui_print_subheader "Office #$i"
+            
+            local office_name office_ip
+            office_name=$(ui_prompt_text "Office name" "Branch-$i")
+            office_ip=$(ui_prompt_ip "Office IP address")
+            
+            OFFICE_NAMES+=("$office_name")
+            OFFICE_IPS+=("$office_ip")
+            
+            ui_print_success "Added: $office_name ($office_ip)"
+        done
+    else
+        ui_print_success "Loaded ${#OFFICE_NAMES[@]} offices from config"
+    fi
 }
 
 collect_sip_trunk_info() {
     ui_print_header "SIP TRUNK CARRIERS"
     
-    local num_trunks
-    num_trunks=$(ui_prompt_number "How many SIP trunk carriers?" "1")
-    
-    for ((i=1; i<=num_trunks; i++)); do
-        ui_print_subheader "SIP Trunk #$i"
+    if [[ ${#TRUNK_NAMES[@]} -eq 0 ]]; then
+        local num_trunks
+        num_trunks=$(ui_prompt_number "How many SIP trunk carriers?" "1")
         
-        local trunk_name trunk_ip
-        trunk_name=$(ui_prompt_text "Carrier name" "Carrier-$i")
-        trunk_ip=$(ui_prompt_ip "SIP trunk IP address")
-        
-        TRUNK_NAMES+=("$trunk_name")
-        TRUNK_IPS+=("$trunk_ip")
-        
-        ui_print_success "Added: $trunk_name ($trunk_ip)"
-    done
+        for ((i=1; i<=num_trunks; i++)); do
+            ui_print_subheader "SIP Trunk #$i"
+            
+            local trunk_name trunk_ip
+            trunk_name=$(ui_prompt_text "Carrier name" "Carrier-$i")
+            trunk_ip=$(ui_prompt_ip "SIP trunk IP address")
+            
+            TRUNK_NAMES+=("$trunk_name")
+            TRUNK_IPS+=("$trunk_ip")
+            
+            ui_print_success "Added: $trunk_name ($trunk_ip)"
+        done
+    else
+        ui_print_success "Loaded ${#TRUNK_NAMES[@]} SIP trunks from config"
+    fi
 }
 
 show_collection_summary() {
@@ -547,6 +571,9 @@ main() {
     
     # Initialize environment
     initialize_environment
+    
+    # Load configuration if provided
+    load_configuration
     
     # Show startup checks
     show_startup_checks

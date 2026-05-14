@@ -1,0 +1,9 @@
+[2026-05-14 10:52:55] === TESTDIVOIP Started ===
+[2026-05-14 10:52:55] PID: 8516
+[2026-05-14 10:52:55] User: root
+[2026-05-14 10:52:55] Host: n0nsidesktop
+[2026-05-14 10:52:55] [INFO] === TESTDIVOIP STARTED ===
+[2026-05-14 10:52:55] [INFO] Script directory: /home/murilo/Applications/testdivoip
+[2026-05-14 10:52:55] [INFO] Debug mode: 0
+[2026-05-14 10:52:55] [INFO] Verbose mode: 0
+[2026-05-14 10:52:55] [INFO] WARNING: Missing dependency: traceroute
