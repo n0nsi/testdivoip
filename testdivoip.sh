@@ -246,6 +246,11 @@ show_startup_checks() {
 ################################################################################
 
 collect_general_info() {
+    # Skip interactive collection if config was loaded and data exists
+    if [[ -n "$CONFIG_FILE" ]] && [[ -n "$CLIENT_NAME" ]] && [[ -n "$SCENARIO_NAME" ]] && [[ -n "$CLOUD_PROVIDER" ]]; then
+        return 0
+    fi
+    
     ui_print_header "GENERAL INFORMATION"
     
     CLIENT_NAME=$(ui_prompt_text "Client Name" "${CLIENT_NAME:-MyCompany}")
@@ -256,6 +261,11 @@ collect_general_info() {
 }
 
 collect_pabx_info() {
+    # Skip interactive collection if PABX_IP already exists from config
+    if [[ -n "$CONFIG_FILE" ]] && [[ -n "$PABX_IP" ]]; then
+        return 0
+    fi
+    
     ui_print_header "PABX INFORMATION"
     
     PABX_IP=$(ui_prompt_ip "PABX IP Address" "${PABX_IP:-}")
@@ -282,7 +292,14 @@ collect_office_info() {
             ui_print_success "Added: $office_name ($office_ip)"
         done
     else
+        # Config was loaded with office data
         ui_print_success "Loaded ${#OFFICE_NAMES[@]} offices from config"
+        
+        # Show offices and ask for confirmation
+        ui_print_subheader "Configured Offices:"
+        for i in "${!OFFICE_NAMES[@]}"; do
+            printf "  %b%d.%b %s: %s\n" "$CYAN" "$((i+1))" "$NC" "${OFFICE_NAMES[$i]}" "${OFFICE_IPS[$i]}" >&2
+        done
     fi
 }
 
@@ -306,7 +323,14 @@ collect_sip_trunk_info() {
             ui_print_success "Added: $trunk_name ($trunk_ip)"
         done
     else
+        # Config was loaded with trunk data
         ui_print_success "Loaded ${#TRUNK_NAMES[@]} SIP trunks from config"
+        
+        # Show trunks and ask for confirmation
+        ui_print_subheader "Configured SIP Trunks:"
+        for i in "${!TRUNK_NAMES[@]}"; do
+            printf "  %b%d.%b %s: %s\n" "$CYAN" "$((i+1))" "$NC" "${TRUNK_NAMES[$i]}" "${TRUNK_IPS[$i]}" >&2
+        done
     fi
 }
 
@@ -332,7 +356,70 @@ show_collection_summary() {
     if ui_prompt_yes_no "Begin testing?"; then
         return 0
     else
+        ui_print_warning "Testing cancelled by user"
         exit 0
+    fi
+}
+
+validate_config_data() {
+    # Validates if all required data is loaded from config
+    if [[ -z "$CLIENT_NAME" ]] || [[ -z "$SCENARIO_NAME" ]] || [[ -z "$CLOUD_PROVIDER" ]] || [[ -z "$PABX_IP" ]]; then
+        ui_print_error "Configuration incomplete. Missing required fields."
+        return 1
+    fi
+    
+    if [[ ${#OFFICE_NAMES[@]} -eq 0 ]] || [[ ${#OFFICE_IPS[@]} -eq 0 ]]; then
+        ui_print_error "Configuration incomplete. No offices defined."
+        return 1
+    fi
+    
+    if [[ ${#TRUNK_NAMES[@]} -eq 0 ]] || [[ ${#TRUNK_IPS[@]} -eq 0 ]]; then
+        ui_print_error "Configuration incomplete. No SIP trunks defined."
+        return 1
+    fi
+    
+    # Validate array lengths match
+    if [[ ${#OFFICE_NAMES[@]} -ne ${#OFFICE_IPS[@]} ]]; then
+        ui_print_error "Configuration error: Office names and IPs count mismatch"
+        return 1
+    fi
+    
+    if [[ ${#TRUNK_NAMES[@]} -ne ${#TRUNK_IPS[@]} ]]; then
+        ui_print_error "Configuration error: Trunk names and IPs count mismatch"
+        return 1
+    fi
+    
+    return 0
+}
+
+show_config_review() {
+    # Display configuration loaded from file with formatted output
+    ui_print_header "CONFIGURATION REVIEW" "=" 70
+    
+    ui_print_subheader "General Information"
+    printf "%b%-25s%b %s\n" "$BOLD" "Client Name:" "$NC" "$CLIENT_NAME" >&2
+    printf "%b%-25s%b %s\n" "$BOLD" "Scenario Name:" "$NC" "$SCENARIO_NAME" >&2
+    printf "%b%-25s%b %s\n" "$BOLD" "Cloud Provider:" "$NC" "$CLOUD_PROVIDER" >&2
+    printf "%b%-25s%b %s\n" "$BOLD" "PABX IP Address:" "$NC" "$PABX_IP" >&2
+    
+    ui_print_subheader "Office Locations (${#OFFICE_NAMES[@]})"
+    for i in "${!OFFICE_NAMES[@]}"; do
+        printf "  %b[%d]%b %-30s %s\n" "$CYAN" "$((i+1))" "$NC" "${OFFICE_NAMES[$i]}" "${OFFICE_IPS[$i]}" >&2
+    done
+    
+    ui_print_subheader "SIP Trunk Carriers (${#TRUNK_NAMES[@]})"
+    for i in "${!TRUNK_NAMES[@]}"; do
+        printf "  %b[%d]%b %-30s %s\n" "$CYAN" "$((i+1))" "$NC" "${TRUNK_NAMES[$i]}" "${TRUNK_IPS[$i]}" >&2
+    done
+    
+    printf "\n" >&2
+    
+    if ui_prompt_yes_no "Is this configuration correct?"; then
+        ui_print_success "Configuration confirmed. Starting analysis..."
+        return 0
+    else
+        ui_print_error "Configuration rejected. Exiting."
+        exit 1
     fi
 }
 
@@ -578,14 +665,29 @@ main() {
     # Show startup checks
     show_startup_checks
     
-    # Interactive data collection
-    collect_general_info
-    collect_pabx_info
-    collect_office_info
-    collect_sip_trunk_info
-    
-    # Show summary and confirm
-    show_collection_summary
+    # Workflow depends on whether config was provided
+    if [[ -n "$CONFIG_FILE" ]]; then
+        # Config file provided - validate and show for review
+        if validate_config_data; then
+            # All required data is present
+            show_config_review
+        else
+            # Config is incomplete - collect missing data interactively
+            ui_print_warning "Configuration is incomplete. Collecting additional information..."
+            collect_general_info
+            collect_pabx_info
+            collect_office_info
+            collect_sip_trunk_info
+            show_collection_summary
+        fi
+    else
+        # No config file - collect data interactively
+        collect_general_info
+        collect_pabx_info
+        collect_office_info
+        collect_sip_trunk_info
+        show_collection_summary
+    fi
     
     # Run all tests and generate report
     run_all_tests

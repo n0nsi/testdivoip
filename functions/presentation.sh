@@ -233,10 +233,11 @@ ui_prompt_number() {
 # ui_prompt_ip: Prompt for IP address with validation
 ui_prompt_ip() {
     local prompt="$1"
+    local default="$2"
     local input
     
     while true; do
-        input=$(ui_prompt_text "$prompt")
+        input=$(ui_prompt_text "$prompt" "$default")
         
         if is_valid_ip "$input"; then
             echo "$input"
