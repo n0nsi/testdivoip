@@ -45,7 +45,6 @@ source_required() {
     }
 }
 
-source_required "${FUNCTIONS_DIR}/colors.sh"
 source_required "${FUNCTIONS_DIR}/logging.sh"
 source_required "${FUNCTIONS_DIR}/network.sh"
 source_required "${FUNCTIONS_DIR}/analysis.sh"
@@ -68,8 +67,6 @@ declare -a OFFICE_IPS=()
 declare -a TRUNK_NAMES=()
 declare -a TRUNK_IPS=()
 declare -a RESULTS=()
-
-trap cleanup_temp EXIT
 
 show_help() {
     cat <<'EOF'
@@ -145,7 +142,9 @@ initialize_environment() {
     umask 077
     mkdir -p "$REPORTS_DIR" "$LOGS_DIR" "$TEMP_DIR" "$CONFIG_DIR" || return 1
 
-    LOG_DIR="$LOGS_DIR"
+    set_runtime_dirs "$LOGS_DIR" "$TEMP_DIR"
+    trap cleanup_temp EXIT
+
     init_logging || return 1
     init_audit_log || return 1
 
@@ -210,6 +209,7 @@ append_config_array_item() {
 }
 
 # Parse the small config format instead of sourcing arbitrary shell code.
+# Comments are accepted on their own lines. A # inside a value stays part of it.
 load_configuration_file() {
     local config_path="$1"
     local in_array=""
@@ -227,8 +227,7 @@ load_configuration_file() {
                 continue
             fi
 
-            value="${cleaned_line%%#*}"
-            value=$(strip_quotes "$value")
+            value=$(strip_quotes "$cleaned_line")
             [[ -n "$value" ]] && append_config_array_item "$in_array" "$value"
             continue
         fi
@@ -244,9 +243,7 @@ load_configuration_file() {
 
         if [[ "$cleaned_line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
             key="${BASH_REMATCH[1]}"
-            value="${BASH_REMATCH[2]}"
-            value="${value%%#*}"
-            value=$(strip_quotes "$value")
+            value=$(strip_quotes "${BASH_REMATCH[2]}")
             set_config_scalar "$key" "$value"
         fi
     done < "$config_path"
@@ -446,7 +443,7 @@ run_complete_analysis() {
     ui_print_info "Running MTR ($MTR_PACKETS packets)..."
     mtr_output=$(run_mtr_raw "$target" "$MTR_PACKETS") || true
     if [ -n "$mtr_output" ]; then
-        mtr_metrics=$(parse_mtr_raw "$mtr_output" 2>/dev/null || true)
+        mtr_metrics=$(parse_mtr_raw "$mtr_output" "$target" 2>/dev/null || true)
     fi
 
     if [ -n "$mtr_metrics" ]; then
@@ -497,9 +494,7 @@ run_complete_analysis() {
     local variation="${mtr_stddev:-${ping_stddev:-0}}"
     local risk_assessment risk_level evidence_weight risk_reasons
     risk_assessment=$(assess_route_risk "$latency" "$loss" "$variation" "$hops")
-    risk_level=$(printf '%s' "$risk_assessment" | cut -d'|' -f1)
-    evidence_weight=$(printf '%s' "$risk_assessment" | cut -d'|' -f2)
-    risk_reasons=$(printf '%s' "$risk_assessment" | cut -d'|' -f3-)
+    IFS='|' read -r risk_level evidence_weight risk_reasons <<< "$risk_assessment"
 
     ui_print_subheader "Measurement summary"
     ui_print_metric "Risk flag" "$risk_level" ""
@@ -548,10 +543,10 @@ risk_to_severity() {
 
 generate_final_report() {
     local total_score=0 valid_count=0
-    local result status kind name ip score category risk evidence latency variation loss hops asn reasons
+    local result status kind name ip score category risk latency variation loss hops asn reasons
 
     for result in "${RESULTS[@]}"; do
-        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
+        IFS='|' read -r status _ _ _ score _ <<< "$result"
         if [ "$status" = "ok" ] && is_number "$score"; then
             ((total_score += score))
             ((valid_count++))
@@ -564,7 +559,7 @@ generate_final_report() {
 
     add_report_section "Path measurements"
     for result in "${RESULTS[@]}"; do
-        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
+        IFS='|' read -r status kind name ip score category risk _ latency variation loss hops asn reasons <<< "$result"
         [ "$status" = "ok" ] || continue
 
         if [ "$kind" = "office" ]; then
@@ -576,7 +571,7 @@ generate_final_report() {
 
     add_report_section "Findings"
     for result in "${RESULTS[@]}"; do
-        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
+        IFS='|' read -r status kind name ip score category risk _ latency variation loss hops asn reasons <<< "$result"
         if [ "$status" = "ok" ]; then
             add_finding "$(risk_to_severity "$risk")" "$name" "$reasons"
         else
@@ -651,18 +646,18 @@ main() {
     if [ "$ACTION" != "run" ]; then
         mkdir -p "$REPORTS_DIR"
         handle_report_action
-        exit $?
+        return $?
     fi
 
     initialize_environment || {
         printf 'Could not initialize local runtime directories.\n' >&2
-        exit 1
+        return 1
     }
 
-    show_startup_checks || exit 1
+    show_startup_checks || return 1
     prepare_configuration || {
         ui_print_warning "Run cancelled or configuration is invalid"
-        exit 1
+        return 1
     }
 
     run_all_tests
@@ -670,4 +665,6 @@ main() {
     ui_print_success "Done"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
