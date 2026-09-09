@@ -42,7 +42,6 @@ ping
 mtr
 traceroute
 whois
-dig
 bc
 awk
 sed
@@ -187,6 +186,6 @@ There are probably still things I will do differently later. That is fine. I wou
 
 ## License
 
-MIT.
+MIT. See `LICENSE`.
 
 **Murilo Prestes**
