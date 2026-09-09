@@ -48,6 +48,7 @@ main() {
     check_file "$SCRIPT_DIR/install.sh"
     check_file "$SCRIPT_DIR/README.md"
     check_file "$SCRIPT_DIR/config/example.conf"
+    check_file "$SCRIPT_DIR/tests/test_testdivoip.sh"
 
     local -a modules=(
         logging.sh
@@ -67,6 +68,7 @@ main() {
     check_syntax "$SCRIPT_DIR/testdivoip.sh"
     check_syntax "$SCRIPT_DIR/install.sh"
     check_syntax "$SCRIPT_DIR/verify.sh"
+    check_syntax "$SCRIPT_DIR/tests/test_testdivoip.sh"
     for module in "${modules[@]}"; do
         if [ -f "$SCRIPT_DIR/functions/$module" ]; then
             check_syntax "$SCRIPT_DIR/functions/$module"
