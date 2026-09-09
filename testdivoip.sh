@@ -49,14 +49,10 @@ source_required "${FUNCTIONS_DIR}/colors.sh"
 source_required "${FUNCTIONS_DIR}/logging.sh"
 source_required "${FUNCTIONS_DIR}/network.sh"
 source_required "${FUNCTIONS_DIR}/analysis.sh"
-source_required "${FUNCTIONS_DIR}/carrier_intelligence.sh"
-source_required "${FUNCTIONS_DIR}/mtr_analysis.sh"
 source_required "${FUNCTIONS_DIR}/reporting.sh"
-source_required "${FUNCTIONS_DIR}/utils.sh"
 source_required "${FUNCTIONS_DIR}/presentation.sh"
 
 DEBUG="${DEBUG:-0}"
-VERBOSE="${VERBOSE:-0}"
 MTR_PACKETS="${MTR_PACKETS:-100}"
 CONFIG_FILE=""
 ACTION="run"
@@ -73,6 +69,8 @@ declare -a TRUNK_NAMES=()
 declare -a TRUNK_IPS=()
 declare -a RESULTS=()
 
+trap cleanup_temp EXIT
+
 show_help() {
     cat <<'EOF'
 TESTDIVOIP
@@ -81,15 +79,13 @@ A Bash helper for repeatable network-path checks around VoIP troubleshooting.
 
 Usage:
   ./testdivoip.sh
-  ./testdivoip.sh --config config/mycompany.conf
-  ./testdivoip.sh --verbose
+  ./testdivoip.sh --config config/local.conf
   ./testdivoip.sh --debug
   ./testdivoip.sh --list-reports
   ./testdivoip.sh --show-report FILE
 
 Options:
   -h, --help          Show this help
-  -v, --verbose       Show more progress while testing
   -d, --debug         Enable debug logging
   -c, --config FILE   Load a local configuration file
       --list-reports  List local TXT reports
@@ -117,13 +113,8 @@ parse_arguments() {
                 show_help
                 exit 0
                 ;;
-            -v|--verbose)
-                VERBOSE=1
-                shift
-                ;;
             -d|--debug)
                 DEBUG=1
-                VERBOSE=1
                 shift
                 ;;
             -c|--config)
@@ -158,7 +149,6 @@ initialize_environment() {
     init_logging || return 1
     init_audit_log || return 1
 
-    log_info "TESTDIVOIP started"
     log_debug "Project root: $PROJECT_ROOT"
 }
 
@@ -203,7 +193,6 @@ set_config_scalar() {
         CLOUD_PROVIDER) CLOUD_PROVIDER="$value" ;;
         PABX_IP) PABX_IP="$value" ;;
         MTR_PACKETS) MTR_PACKETS="$value" ;;
-        VERBOSE) VERBOSE="$value" ;;
         DEBUG) DEBUG="$value" ;;
     esac
 }
@@ -283,6 +272,7 @@ load_configuration() {
 
 validate_configuration() {
     local errors=0
+    local ip
 
     [ -n "$CLIENT_NAME" ] || { ui_print_error "CLIENT_NAME is missing"; errors=1; }
     [ -n "$SCENARIO_NAME" ] || { ui_print_error "SCENARIO_NAME is missing"; errors=1; }
@@ -304,7 +294,6 @@ validate_configuration() {
         errors=1
     fi
 
-    local ip
     for ip in "${OFFICE_IPS[@]}" "${TRUNK_IPS[@]}"; do
         is_valid_ip "$ip" || {
             ui_print_error "Invalid target IP: $ip"
@@ -316,6 +305,14 @@ validate_configuration() {
         ui_print_error "MTR_PACKETS must be an integer between 10 and 1000"
         errors=1
     fi
+
+    case "$DEBUG" in
+        0|1) ;;
+        *)
+            ui_print_error "DEBUG must be 0 or 1"
+            errors=1
+            ;;
+    esac
 
     return "$errors"
 }
@@ -407,10 +404,19 @@ show_startup_checks() {
     ui_print_success "Dependencies look OK"
 }
 
+sanitize_result_field() {
+    local value="$1"
+    value="${value//$'\n'/ }"
+    value="${value//|/-}"
+    printf '%s' "$value"
+}
+
 run_complete_analysis() {
     local target="$1"
     local target_name="$2"
     local kind="$3"
+    local result_name
+    result_name=$(sanitize_result_field "$target_name")
 
     ui_print_subheader "Testing: $target_name ($target)"
     audit_log_event "TARGET" "kind=$kind name=$target_name ip=$target status=start"
@@ -454,7 +460,7 @@ run_complete_analysis() {
         audit_log_event "MTR" "target=$target status=no_usable_metrics"
     fi
 
-    # Prefer ping for RTT/loss. If ping is filtered or unparsable, use final-hop MTR.
+    # Prefer ping for RTT/loss. If ping is filtered, final-hop MTR is a fallback.
     if [ -z "$latency" ] && [ -n "$mtr_avg" ]; then
         latency="$mtr_avg"
         loss="$mtr_loss"
@@ -464,7 +470,7 @@ run_complete_analysis() {
         ui_print_error "No usable latency/loss measurement for $target"
         audit_log_event "TARGET" "kind=$kind name=$target_name ip=$target status=unmeasured"
         printf 'failed|%s|%s|%s|0|UNKNOWN|unknown|0|0|0|0|0|UNKNOWN|No usable latency/loss measurement.\n' \
-            "$kind" "$target_name" "$target"
+            "$kind" "$result_name" "$target"
         return 0
     fi
 
@@ -488,9 +494,9 @@ run_complete_analysis() {
         [ "$asn_name" != "UNKNOWN" ] && ui_print_metric "ASN name" "$asn_name" ""
     fi
 
-    local jitter="${mtr_stddev:-${ping_stddev:-0}}"
+    local variation="${mtr_stddev:-${ping_stddev:-0}}"
     local risk_assessment risk_level evidence_weight risk_reasons
-    risk_assessment=$(assess_route_risk "$traceroute_output" "$mtr_output" "$latency" "$loss" "$hops")
+    risk_assessment=$(assess_route_risk "$latency" "$loss" "$variation" "$hops")
     risk_level=$(printf '%s' "$risk_assessment" | cut -d'|' -f1)
     evidence_weight=$(printf '%s' "$risk_assessment" | cut -d'|' -f2)
     risk_reasons=$(printf '%s' "$risk_assessment" | cut -d'|' -f3-)
@@ -501,16 +507,18 @@ run_complete_analysis() {
     ui_print_info "$risk_reasons"
 
     local score category
-    score=$(calculate_voip_score "$latency" "$jitter" "$loss" "$hops") || score=0
+    score=$(calculate_voip_score "$latency" "$variation" "$loss" "$hops") || score=0
     category=$(classify_voip_quality "$score")
 
     ui_show_quality_status "$category" "$score"
     audit_log_summary "$target" "$score" "$category" "$risk_level" "$evidence_weight"
     audit_log_event "TARGET" "kind=$kind name=$target_name ip=$target status=done"
 
+    risk_reasons=$(sanitize_result_field "$risk_reasons")
+
     printf 'ok|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "$kind" "$target_name" "$target" "$score" "$category" "$risk_level" "$evidence_weight" \
-        "$latency" "$jitter" "$loss" "$hops" "$primary_asn" "$risk_reasons"
+        "$kind" "$result_name" "$target" "$score" "$category" "$risk_level" "$evidence_weight" \
+        "$latency" "$variation" "$loss" "$hops" "$primary_asn" "$risk_reasons"
 }
 
 run_all_tests() {
@@ -540,10 +548,10 @@ risk_to_severity() {
 
 generate_final_report() {
     local total_score=0 valid_count=0
-    local result status kind name ip score category risk evidence latency jitter loss hops asn reasons
+    local result status kind name ip score category risk evidence latency variation loss hops asn reasons
 
     for result in "${RESULTS[@]}"; do
-        IFS='|' read -r status kind name ip score category risk evidence latency jitter loss hops asn reasons <<< "$result"
+        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
         if [ "$status" = "ok" ] && is_number "$score"; then
             ((total_score += score))
             ((valid_count++))
@@ -555,16 +563,21 @@ generate_final_report() {
     add_report_metric "Audit log" "$AUDIT_LOG_FILE"
 
     add_report_section "Path measurements"
-
     for result in "${RESULTS[@]}"; do
-        IFS='|' read -r status kind name ip score category risk evidence latency jitter loss hops asn reasons <<< "$result"
+        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
+        [ "$status" = "ok" ] || continue
 
+        if [ "$kind" = "office" ]; then
+            add_office_analysis "$name" "$ip" "$latency" "$variation" "$loss" "$hops" "$asn" "$score" "$category"
+        else
+            add_sip_trunk_analysis "$name" "$ip" "$latency" "$variation" "$loss" "$hops" "$asn" "$score" "$category"
+        fi
+    done
+
+    add_report_section "Findings"
+    for result in "${RESULTS[@]}"; do
+        IFS='|' read -r status kind name ip score category risk evidence latency variation loss hops asn reasons <<< "$result"
         if [ "$status" = "ok" ]; then
-            if [ "$kind" = "office" ]; then
-                add_office_analysis "$name" "$ip" "$latency" "$jitter" "$loss" "$hops" "$asn" "$score" "$category"
-            else
-                add_sip_trunk_analysis "$name" "$ip" "$latency" "$jitter" "$loss" "$hops" "$asn" "$score" "$category"
-            fi
             add_finding "$(risk_to_severity "$risk")" "$name" "$reasons"
         else
             add_finding "WARNING" "$name" "$reasons"
