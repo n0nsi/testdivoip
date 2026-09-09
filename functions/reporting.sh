@@ -1,9 +1,6 @@
 #!/bin/bash
 
-################################################################################
-# REPORTING - reporting.sh
-# Plain-text reports for later comparison. No deployment verdicts or marketing text.
-################################################################################
+# Plain-text reports for later comparison. No deployment verdicts here.
 
 REPORTS_DIR="${REPORTS_DIR:-reports}"
 
@@ -37,21 +34,11 @@ init_report() {
         echo "Generated: $(date '+%Y-%m-%d %H:%M:%S %Z')"
         echo ""
         echo "This file summarizes measurements collected during one run."
-        echo "Read it together with the audit log and the raw route evidence."
+        echo "Read it together with the audit log and the route evidence."
         echo ""
     } > "$REPORT_FILE"
 
     log_info "Report initialized: $REPORT_FILE"
-}
-
-add_report_header() {
-    local title="$1"
-    {
-        echo ""
-        echo "$title"
-        printf '%*s\n' "${#title}" '' | tr ' ' '='
-        echo ""
-    } >> "$REPORT_FILE"
 }
 
 add_report_section() {
@@ -110,7 +97,7 @@ add_path_analysis() {
     local label="$1"
     local target_ip="$2"
     local latency="$3"
-    local jitter="$4"
+    local variation="$4"
     local loss="$5"
     local hops="$6"
     local asn="$7"
@@ -120,7 +107,7 @@ add_path_analysis() {
     add_report_subsection "$label"
     add_report_metric "Target" "$target_ip"
     add_report_metric "RTT average" "$latency" "ms"
-    add_report_metric "MTR StDev" "$jitter" "ms"
+    add_report_metric "Latency variation" "$variation" "ms StDev"
     add_report_metric "Packet loss" "$loss" "%"
     add_report_metric "Hop count" "$hops"
     add_report_metric "Target ASN" "$asn"
@@ -134,10 +121,6 @@ add_office_analysis() {
 
 add_sip_trunk_analysis() {
     add_path_analysis "SIP trunk: $1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"
-}
-
-add_findings_section() {
-    add_report_section "Findings"
 }
 
 add_finding() {
@@ -176,20 +159,6 @@ add_technical_details_section() {
     add_report_section "Evidence"
 }
 
-add_mtr_result() {
-    local target="$1"
-    local mtr_output="$2"
-    add_report_subsection "MTR: $target"
-    printf '%s\n\n' "$mtr_output" >> "$REPORT_FILE"
-}
-
-add_traceroute_result() {
-    local target="$1"
-    local traceroute_output="$2"
-    add_report_subsection "Traceroute: $target"
-    printf '%s\n\n' "$traceroute_output" >> "$REPORT_FILE"
-}
-
 print_report_path() {
     print_success "Report saved to: $REPORT_FILE"
 }
@@ -209,7 +178,5 @@ list_reports() {
         printf '%s\n' "$(basename "$file")"
     done < <(find "$REPORTS_DIR" -maxdepth 1 -type f -name '*.txt' -print | sort)
 
-    if [ "$found" -eq 0 ]; then
-        echo "No reports found."
-    fi
+    [ "$found" -eq 1 ] || echo "No reports found."
 }
