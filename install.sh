@@ -101,10 +101,7 @@ verify_installation() {
         logging.sh
         network.sh
         analysis.sh
-        carrier_intelligence.sh
-        mtr_analysis.sh
         reporting.sh
-        utils.sh
         presentation.sh
     )
 
