@@ -26,6 +26,8 @@ For each configured office, remote site or SIP trunk target, the script tries to
 - target ASN information through Team Cymru WHOIS
 - a small troubleshooting score based on the measurements above
 
+The MTR parser only accepts metrics from a line containing the requested target. If the destination is not present in the report, an intermediate hop is not treated as the endpoint.
+
 The score is only a compact summary. Carrier names are not blacklisted and a numeric traceroute is not treated as proof that a route is international.
 
 Also, MTR StDev is latency variation from the path test. It is useful context, but it is not the same thing as measuring RTP jitter from a live call.
@@ -34,7 +36,7 @@ Also, MTR StDev is latency variation from the path test. It is useful context, b
 
 I mainly use this on Debian and Ubuntu.
 
-Runtime commands:
+Commands used directly by the project include:
 
 ```text
 bash
@@ -42,6 +44,7 @@ ping
 mtr
 traceroute
 whois
+timeout
 bc
 awk
 sed
@@ -49,7 +52,7 @@ grep
 find
 ```
 
-The installer handles the main Debian/Ubuntu packages automatically.
+The installer handles the main Debian/Ubuntu packages automatically. `timeout` and the other basic text/file utilities come from the normal base system on these distributions.
 
 ## Install
 
@@ -104,7 +107,7 @@ Print one report:
 
 For a real test I copy it to another `.conf` file and keep that file local. The `.gitignore` already excludes customer-specific config files.
 
-The main script parses the fields it knows instead of sourcing the config as arbitrary shell code.
+The main script parses the fields it knows instead of sourcing the config as arbitrary shell code. Comments are expected on their own lines; a `#` inside a value is kept as part of that value.
 
 Real customer names, IPs, office details and SIP trunk information should stay out of this repository.
 
@@ -151,24 +154,42 @@ Those directories are ignored by Git. Runtime logs should not end up committed t
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── shell-checks.yml
 ├── config/
 │   └── example.conf
 ├── functions/
+│   ├── analysis.sh
+│   ├── logging.sh
+│   ├── network.sh
+│   ├── presentation.sh
+│   └── reporting.sh
+├── tests/
+│   └── test_testdivoip.sh
 ├── install.sh
 ├── testdivoip.sh
 ├── verify.sh
 └── README.md
 ```
 
-The main script handles the workflow. The files under `functions/` keep networking, scoring, logging, reporting and terminal output separated enough that I can change one part without turning the whole thing into one huge Bash file.
+The main script handles the workflow. The files under `functions/` separate the parts that actually have different responsibilities without turning a small Bash tool into a framework.
 
-## Verify the checkout
+## Verify and test the checkout
+
+Repository structure, Bash syntax and runtime command checks:
 
 ```bash
 bash verify.sh
 ```
 
-It checks the expected files, Bash syntax and the runtime commands the project needs.
+Parser, configuration and CLI regression tests:
+
+```bash
+bash tests/test_testdivoip.sh
+```
+
+The pull-request workflow also runs ShellCheck and installs the project into a temporary directory before accepting the checks as green.
 
 ## About the score
 
