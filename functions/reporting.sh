@@ -160,7 +160,7 @@ add_technical_details_section() {
 }
 
 print_report_path() {
-    print_success "Report saved to: $REPORT_FILE"
+    ui_print_success "Report saved to: $REPORT_FILE"
 }
 
 show_report() {
