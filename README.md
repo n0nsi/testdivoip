@@ -81,12 +81,6 @@ cp config/example.conf config/local.conf
 ./testdivoip.sh --config config/local.conf
 ```
 
-More output while testing:
-
-```bash
-./testdivoip.sh --verbose
-```
-
 Debug logging:
 
 ```bash
