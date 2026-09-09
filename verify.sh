@@ -88,7 +88,7 @@ main() {
     fi
 
     echo ""
-    error "$errors check(s) need attention"
+    printf '[ERR]  %d check(s) need attention\n' "$errors" >&2
     return 1
 }
 
