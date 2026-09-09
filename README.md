@@ -2,9 +2,9 @@
 
 A Bash tool I built to make VoIP route troubleshooting less repetitive.
 
-When a PABX looks fine, the SIP trunk is up and the call still sounds bad, I usually end up checking the same things again: latency, packet loss, jitter, traceroute, MTR and which networks the traffic is crossing.
+When the PBX looks fine, the SIP trunk is up and the call still sounds bad, I usually want the same evidence again: packet loss, RTT, MTR, traceroute and some ASN context.
 
-This project puts those checks in one workflow and keeps the result in a report I can review later.
+TESTDIVOIP puts those checks in one run and keeps a local report so I can compare what I saw instead of depending on terminal history.
 
 — **Murilo Prestes**
 
@@ -12,162 +12,154 @@ This project puts those checks in one workflow and keeps the result in a report 
 
 VoIP problems are not always inside Asterisk or FreePBX.
 
-Sometimes the application is healthy and the problem is the path between the server, the office and the carrier. Running every command by hand works, but after doing it enough times I wanted something repeatable.
+Sometimes the application is healthy and the network path is the part worth looking at. Running every command by hand works, but after doing it enough times I wanted the boring part to be repeatable.
 
-That is where TESTDIVOIP came from.
+That is basically this project.
 
-It checks routes between a VoIP server and one or more destinations, such as offices or SIP carriers, and helps me compare what is happening in the network.
+## What it collects
 
-## What it checks
+For each configured office, remote site or SIP trunk target, the script tries to collect:
 
-- ping and packet loss
-- latency
-- MTR
-- traceroute
-- hop count
-- ASN information
-- route changes
-- basic VoIP quality scoring
-- office and SIP trunk paths
+- ping RTT and packet loss
+- MTR destination loss, average RTT and StDev
+- numeric traceroute and hop count
+- target ASN information through Team Cymru WHOIS
+- a small troubleshooting score based on the measurements above
 
-The script also creates local reports and audit logs so I do not have to depend only on what was on the terminal at the time of the test.
+The score is only a compact summary. Carrier names are not blacklisted and a numeric traceroute is not treated as proof that a route is international.
+
+Also, MTR StDev is latency variation from the path test. It is useful context, but it is not the same thing as measuring RTP jitter from a live call.
 
 ## Requirements
 
-I mainly use it on Debian-based systems.
+I mainly use this on Debian and Ubuntu.
 
-Packages used by the project include:
+Runtime commands:
 
-```bash
+```text
+bash
+ping
 mtr
-dnsutils
+traceroute
 whois
-curl
-jq
+dig
 bc
-net-tools
-iproute2
+awk
+sed
+grep
+find
 ```
 
-Bash 4 or newer is recommended.
+The installer handles the main Debian/Ubuntu packages automatically.
 
 ## Install
 
 Clone the repository and run:
 
 ```bash
-sudo bash install.sh
+bash install.sh
 ```
 
-Or install the dependencies manually:
+Running it as root installs under `/opt/testdivoip` and creates `/usr/local/bin/testdivoip`.
 
-```bash
-sudo apt update
-sudo apt install -y mtr-tiny dnsutils whois curl jq bc net-tools iproute2
-```
+As a normal user it installs under `~/.local/share/testdivoip` and creates `~/.local/bin/testdivoip`.
 
-Then make the scripts executable if needed:
-
-```bash
-chmod +x testdivoip.sh
-chmod +x functions/*.sh
-```
+You can also run the project directly from the repository without installing it.
 
 ## Usage
 
-The simplest way is interactive mode:
+Interactive mode:
 
 ```bash
 ./testdivoip.sh
 ```
 
-Verbose output:
+Using a local config:
+
+```bash
+cp config/example.conf config/local.conf
+./testdivoip.sh --config config/local.conf
+```
+
+More output while testing:
 
 ```bash
 ./testdivoip.sh --verbose
 ```
 
-Debug mode:
+Debug logging:
 
 ```bash
 ./testdivoip.sh --debug
 ```
 
-Using a configuration file:
+List local reports:
 
 ```bash
-./testdivoip.sh --config config/mycompany.conf
+./testdivoip.sh --list-reports
+```
+
+Print one report:
+
+```bash
+./testdivoip.sh --show-report Lab_20260909_120000.txt
 ```
 
 ## Configuration
 
-The repository has an example configuration in:
+`config/example.conf` uses documentation-only IP ranges. It is there to show the format, not to pretend there is a real customer behind the example.
+
+For a real test I copy it to another `.conf` file and keep that file local. The `.gitignore` already excludes customer-specific config files.
+
+The main script parses the fields it knows instead of sourcing the config as arbitrary shell code.
+
+Real customer names, IPs, office details and SIP trunk information should stay out of this repository.
+
+## What a run looks like
 
 ```text
-config/example.conf
+machine running TESTDIVOIP
+        |
+        +---- office / remote target
+        |
+        +---- SIP trunk target
+
+        ping + MTR + traceroute + ASN context
+                       |
+                       v
+              local report + audit log
 ```
 
-For a real environment, I copy the example and keep the real file local:
-
-```bash
-cp config/example.conf config/mycompany.conf
-```
-
-Customer names, real IP addresses, office information and SIP trunk details should not be committed to the repository.
-
-## How I use it
-
-A normal test for me looks roughly like this:
+For me the useful question is not “did the script say GOOD or BAD?”. It is:
 
 ```text
-VoIP server
-   |
-   +---- office / remote site
-   |
-   +---- SIP carrier
+What did I actually measure?
+        |
+        v
+Can I reproduce it?
+        |
+        v
+Does the evidence point to the path, or do I need to keep looking?
 ```
-
-For each path I want evidence instead of guessing.
-
-```text
-Can I reach it?
-      |
-      v
-What is the latency and loss?
-      |
-      v
-Which path is the traffic taking?
-      |
-      v
-Did the route change?
-      |
-      v
-Is there something here that can hurt voice quality?
-```
-
-That is basically what the project automates.
 
 ## Output
 
-Reports are written under:
+Runtime data stays local:
 
 ```text
 reports/
-```
-
-Audit logs are written under:
-
-```text
 logs/
+temp/
 ```
 
-These files are local operational data and should stay out of Git.
+Those directories are ignored by Git. Runtime logs should not end up committed to the repository.
 
 ## Project structure
 
 ```text
-testdivoip/
+.
 ├── config/
+│   └── example.conf
 ├── functions/
 ├── install.sh
 ├── testdivoip.sh
@@ -175,21 +167,29 @@ testdivoip/
 └── README.md
 ```
 
-The main script loads smaller modules from `functions/` for networking, analysis, logging and report generation.
+The main script handles the workflow. The files under `functions/` keep networking, scoring, logging, reporting and terminal output separated enough that I can change one part without turning the whole thing into one huge Bash file.
 
-## Important note about the score
+## Verify the checkout
 
-The quality score is a troubleshooting aid, not a replacement for reading the actual network data.
+```bash
+bash verify.sh
+```
 
-A number by itself does not explain a VoIP problem. I still look at the MTR, packet loss, latency, route and the context of the environment before deciding what is wrong.
+It checks the expected files, Bash syntax and the runtime commands the project needs.
+
+## About the score
+
+I kept the score because it is handy for comparing runs, but I deliberately made it boring.
+
+It is based on measured RTT, loss, latency variation and a small hop-count penalty. It does **not** automatically punish a route because a certain ASN or carrier appears in it.
+
+It is not an SLA result, a carrier verdict or a production-readiness decision. I still read the actual measurements before deciding what is wrong.
 
 ## Status
 
-This is a project I use to study, test ideas and improve the way I troubleshoot VoIP networks.
+This is a tool from my own troubleshooting and study work. I change it when I find something that makes the next investigation less manual or less misleading.
 
-There are parts I still want to improve. I would rather keep the project honest about that than call unfinished things "enterprise ready".
-
-If I find a better way to test something in a real environment, it will probably end up here.
+There are probably still things I will do differently later. That is fine. I would rather keep a small tool I can explain than call it a platform because the README looks impressive.
 
 ## License
 
