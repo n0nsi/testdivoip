@@ -96,7 +96,6 @@ install_project() {
 
 verify_installation() {
     local -a required_modules=(
-        colors.sh
         logging.sh
         network.sh
         analysis.sh
