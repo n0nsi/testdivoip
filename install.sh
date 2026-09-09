@@ -86,7 +86,7 @@ install_project() {
              "$BIN_DIR"
 
     install -m 0755 "$SCRIPT_DIR/testdivoip.sh" "$INSTALL_PREFIX/testdivoip.sh"
-    install -m 0755 "$SCRIPT_DIR/functions/"*.sh "$INSTALL_PREFIX/functions/"
+    install -m 0644 "$SCRIPT_DIR/functions/"*.sh "$INSTALL_PREFIX/functions/"
     install -m 0644 "$SCRIPT_DIR/config/example.conf" "$INSTALL_PREFIX/config/example.conf"
 
     ln -sfn "$INSTALL_PREFIX/testdivoip.sh" "$BIN_DIR/testdivoip"
