@@ -10,10 +10,10 @@ calculate_voip_score() {
     local hops="$4"
     local score=100
 
-    is_float "$latency" && is_float "$variation" && is_float "$loss" && is_number "$hops" || {
+    if ! is_float "$latency" || ! is_float "$variation" || ! is_float "$loss" || ! is_number "$hops"; then
         echo "0"
         return 1
-    }
+    fi
 
     if (( $(echo "$latency > 200" | bc -l) )); then
         ((score -= 35))
@@ -55,10 +55,10 @@ calculate_voip_score() {
 classify_voip_quality() {
     local score="$1"
 
-    is_number "$score" || {
+    if ! is_number "$score"; then
         echo "CRÍTICO"
         return 1
-    }
+    fi
 
     if (( score >= 85 )); then
         echo "EXCELENTE"
