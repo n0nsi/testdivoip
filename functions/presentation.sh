@@ -2,11 +2,14 @@
 
 # Small terminal UI used by testdivoip.sh.
 
-if [ -z "${NC+x}" ]; then
-    PRESENTATION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-    # shellcheck source=/dev/null
-    source "${PRESENTATION_DIR}/colors.sh" || return 1
-fi
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly MAGENTA='\033[0;35m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
 
 ui_print_success() {
     printf '%b✓ %s%b\n' "$GREEN" "$1" "$NC" >&2
@@ -30,8 +33,8 @@ ui_print_debug() {
 
 ui_print_header() {
     local text="$1"
-    local width="${3:-60}"
     local char="${2:-=}"
+    local width="${3:-60}"
 
     printf '\n%b' "$BOLD" >&2
     printf '%*s\n' "$width" '' | tr ' ' "$char" >&2
