@@ -11,22 +11,32 @@ error() { printf '[ERR]  %s\n' "$*" >&2; errors=$((errors + 1)); }
 
 check_file() {
     local path="$1"
-    [ -f "$path" ] && ok "$(basename "$path")" || error "Missing file: $path"
+
+    if [ -f "$path" ]; then
+        ok "$(basename "$path")"
+    else
+        error "Missing file: $path"
+    fi
 }
 
 check_command() {
     local command_name="$1"
-    command -v "$command_name" >/dev/null 2>&1 \
-        && ok "dependency: $command_name" \
-        || error "missing dependency: $command_name"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        ok "dependency: $command_name"
+    else
+        error "missing dependency: $command_name"
+    fi
 }
 
 check_syntax() {
     local path="$1"
+    local display_path="${path#"$SCRIPT_DIR"/}"
+
     if bash -n "$path"; then
-        ok "syntax: ${path#$SCRIPT_DIR/}"
+        ok "syntax: $display_path"
     else
-        error "syntax error: ${path#$SCRIPT_DIR/}"
+        error "syntax error: $display_path"
     fi
 }
 
@@ -40,7 +50,6 @@ main() {
     check_file "$SCRIPT_DIR/config/example.conf"
 
     local -a modules=(
-        colors.sh
         logging.sh
         network.sh
         analysis.sh
@@ -59,12 +68,14 @@ main() {
     check_syntax "$SCRIPT_DIR/install.sh"
     check_syntax "$SCRIPT_DIR/verify.sh"
     for module in "${modules[@]}"; do
-        [ -f "$SCRIPT_DIR/functions/$module" ] && check_syntax "$SCRIPT_DIR/functions/$module"
+        if [ -f "$SCRIPT_DIR/functions/$module" ]; then
+            check_syntax "$SCRIPT_DIR/functions/$module"
+        fi
     done
 
     echo ""
     echo "Runtime commands"
-    local -a commands=(bash ping mtr traceroute whois bc awk sed grep find)
+    local -a commands=(bash ping mtr traceroute whois timeout bc awk sed grep find)
     local command_name
     for command_name in "${commands[@]}"; do
         check_command "$command_name"
