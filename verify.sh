@@ -64,7 +64,7 @@ main() {
 
     echo ""
     echo "Runtime commands"
-    local -a commands=(bash ping mtr traceroute whois dig bc awk sed grep find)
+    local -a commands=(bash ping mtr traceroute whois bc awk sed grep find)
     local command_name
     for command_name in "${commands[@]}"; do
         check_command "$command_name"
