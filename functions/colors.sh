@@ -28,6 +28,7 @@ readonly BRIGHT_GREEN='\033[1;32m'
 readonly BRIGHT_YELLOW='\033[1;33m'
 readonly BRIGHT_BLUE='\033[1;34m'
 readonly BRIGHT_CYAN='\033[1;36m'
+readonly BRIGHT_MAGENTA='\033[1;35m'
 readonly BRIGHT_WHITE='\033[1;37m'
 
 ################################################################################
