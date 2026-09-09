@@ -5,7 +5,7 @@ set -u
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 # Sourcing the main file loads the real functions without starting an interactive run.
-# shellcheck source=../testdivoip.sh
+# shellcheck source=testdivoip.sh
 source "$ROOT_DIR/testdivoip.sh"
 
 failures=0
