@@ -5,23 +5,23 @@
 run_ping_raw() {
     local target="$1"
     local count="${2:-10}"
-    local timeout="${3:-5}"
+    local timeout_seconds="${3:-5}"
 
     is_valid_ip "$target" || return 1
-    LC_ALL=C ping -c "$count" -W "$timeout" -n "$target" 2>&1
+    LC_ALL=C ping -c "$count" -W "$timeout_seconds" -n "$target" 2>&1
 }
 
 # Output: avg loss min max stddev
 get_ping_stats_raw() {
     local target="$1"
     local count="${2:-10}"
-    local timeout="${3:-5}"
+    local timeout_seconds="${3:-5}"
     local output="${4:-}"
 
     is_valid_ip "$target" || return 1
 
     if [ -z "$output" ]; then
-        output=$(run_ping_raw "$target" "$count" "$timeout") || true
+        output=$(run_ping_raw "$target" "$count" "$timeout_seconds") || true
     fi
 
     [ -n "$output" ] || return 1
@@ -62,9 +62,23 @@ run_mtr_raw() {
 # Output: loss avg best worst stddev
 parse_mtr_raw() {
     local mtr_output="$1"
+    local target="$2"
     local final_line loss avg best worst stddev
 
-    final_line=$(printf '%s\n' "$mtr_output" | awk '/[0-9.]+%/ {line=$0} END {print line}')
+    is_valid_ip "$target" || return 1
+
+    # Do not treat the last responsive intermediate hop as the destination.
+    # Only accept a report line that actually contains the requested target IP.
+    final_line=$(printf '%s\n' "$mtr_output" | awk -v target="$target" '
+        /[0-9.]+%/ {
+            for (i = 1; i <= NF; i++) {
+                if ($i == target) {
+                    line = $0
+                }
+            }
+        }
+        END { print line }
+    ')
     [ -n "$final_line" ] || return 1
 
     loss=$(printf '%s\n' "$final_line" | awk '{print $(NF-6)}' | tr -d '%')
@@ -100,7 +114,7 @@ lookup_asn() {
         return 1
     }
 
-    result=$(LC_ALL=C whois -h whois.cymru.com " -v $ip" 2>/dev/null \
+    result=$(LC_ALL=C timeout 5 whois -h whois.cymru.com " -v $ip" 2>/dev/null \
         | awk -F'|' 'NR>1 {
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
             if ($1 ~ /^[0-9]+$/) { print "AS" $1; exit }
@@ -120,7 +134,7 @@ lookup_asn_name() {
 
     # Team Cymru's verbose ASN lookup is:
     # AS | CC | Registry | Allocated | AS Name
-    result=$(LC_ALL=C whois -h whois.cymru.com " -v $asn" 2>/dev/null \
+    result=$(LC_ALL=C timeout 5 whois -h whois.cymru.com " -v $asn" 2>/dev/null \
         | awk -F'|' 'NR>1 {
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", $5)
             if ($5 != "") { print $5; exit }
