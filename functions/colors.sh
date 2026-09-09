@@ -2,8 +2,7 @@
 
 ################################################################################
 # PRESENTATION LAYER - colors.sh
-# UI functions ONLY - never contaminate data output
-# ALL output to stdout is for terminal display only
+# Terminal output helpers for TESTDIVOIP.
 ################################################################################
 
 if [ -n "${TESTDIVOIP_COLORS_LOADED:-}" ]; then
@@ -11,7 +10,7 @@ if [ -n "${TESTDIVOIP_COLORS_LOADED:-}" ]; then
 fi
 TESTDIVOIP_COLORS_LOADED=1
 
-# ANSI Colors - ONLY for display
+# ANSI colors used only for terminal output.
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -19,12 +18,11 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly MAGENTA='\033[0;35m'
 readonly WHITE='\033[1;37m'
-readonly NC='\033[0m' # No Color
+readonly NC='\033[0m'
 readonly BOLD='\033[1m'
 readonly DIM='\033[2m'
 readonly UNDERLINE='\033[4m'
 
-# High intensity colors
 readonly BRIGHT_RED='\033[1;31m'
 readonly BRIGHT_GREEN='\033[1;32m'
 readonly BRIGHT_YELLOW='\033[1;33m'
@@ -85,13 +83,12 @@ print_dimmed() {
     printf "${DIM}${1}${NC}\n"
 }
 
-# Loading animation
 print_loading() {
     local text="$1"
     local pid=$2
     local chars=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
     local delay=0.1
-    
+
     while kill -0 "$pid" 2>/dev/null; do
         for char in "${chars[@]}"; do
             printf "\r${CYAN}${char}${NC} ${text}"
@@ -101,13 +98,12 @@ print_loading() {
     printf "\r%${#text}s\r" ""
 }
 
-# Spinner simpler
 spinner() {
     local text="$1"
     local pid=$2
     local i=0
     local sp='-\|/'
-    
+
     while kill -0 "$pid" 2>/dev/null; do
         printf "\r${CYAN}${sp:i++%${#sp}:1}${NC} ${text}"
         sleep 0.1
@@ -119,7 +115,6 @@ spinner() {
 # TABLE FUNCTIONS
 ################################################################################
 
-# Print table row
 table_row() {
     local col1="$1"
     local col2="$2"
@@ -141,10 +136,9 @@ print_banner() {
   ╔════════════════════════════════════════════════════════════════════════╗
   ║                                                                        ║
   ║                       🔊  TESTDIVOIP  🔊                              ║
-  ║                  VoIP Route Quality Analysis Tool                      ║
-  ║                    Cloud Provider Validation                          ║
+  ║                    VoIP route troubleshooting                          ║
   ║                                                                        ║
-  ║              Professional SRE/VoIP Network Diagnostics                ║
+  ║                         Murilo Prestes                                 ║
   ║                                                                        ║
   ╚════════════════════════════════════════════════════════════════════════╝
 EOF
@@ -153,7 +147,7 @@ EOF
 
 print_small_banner() {
     printf "${BRIGHT_CYAN}"
-    echo "┌─ TESTDIVOIP - VoIP Route Quality Analysis"
+    echo "┌─ TESTDIVOIP - VoIP route troubleshooting"
     printf "${NC}\n"
 }
 
@@ -172,19 +166,19 @@ print_section() {
 print_voip_score() {
     local score="$1"
     local percentage="$2"
-    
+
     case "$score" in
         "EXCELENTE")
-            printf "${BRIGHT_GREEN}${BOLD}[$score]${NC} (${percentage}%%) - Fully suitable for VoIP production\n"
+            printf "${BRIGHT_GREEN}${BOLD}[$score]${NC} (${percentage}%%) - Looks good in the checks collected here\n"
             ;;
         "BOM")
-            printf "${GREEN}${BOLD}[$score]${NC} (${percentage}%%) - Good for VoIP, monitor performance\n"
+            printf "${GREEN}${BOLD}[$score]${NC} (${percentage}%%) - Looks acceptable, keep an eye on the route\n"
             ;;
         "ATENÇÃO")
-            printf "${BRIGHT_YELLOW}${BOLD}[$score]${NC} (${percentage}%%) - Needs attention before VoIP deployment\n"
+            printf "${BRIGHT_YELLOW}${BOLD}[$score]${NC} (${percentage}%%) - Worth checking before relying on this path\n"
             ;;
         "CRÍTICO")
-            printf "${BRIGHT_RED}${BOLD}[$score]${NC} (${percentage}%%) - NOT recommended for VoIP\n"
+            printf "${BRIGHT_RED}${BOLD}[$score]${NC} (${percentage}%%) - The collected checks show a bad path\n"
             ;;
     esac
 }
@@ -198,7 +192,7 @@ print_metric() {
     local value="$2"
     local unit="${3:-}"
     local color="${4:-${CYAN}}"
-    
+
     printf "  ${BOLD}%-25s${NC} ${color}%s${NC} %s\n" "$label" "$value" "$unit"
 }
 
@@ -207,24 +201,23 @@ print_metric_with_status() {
     local value="$2"
     local unit="$3"
     local threshold="$4"
-    
+
     local color="${BRIGHT_GREEN}"
     local symbol="✓"
-    
+
     if (( $(echo "$value > $threshold" | bc -l) )); then
         color="${BRIGHT_RED}"
         symbol="✗"
     fi
-    
+
     printf "  ${BOLD}%-25s${NC} ${color}${symbol} %s${NC} %s\n" "$label" "$value" "$unit"
 }
 
-# Color based on value
 get_color_by_value() {
     local value="$1"
     local good_threshold="$2"
     local warning_threshold="$3"
-    
+
     if (( $(echo "$value <= $good_threshold" | bc -l) )); then
         echo "${BRIGHT_GREEN}"
     elif (( $(echo "$value <= $warning_threshold" | bc -l) )); then
@@ -233,4 +226,3 @@ get_color_by_value() {
         echo "${BRIGHT_RED}"
     fi
 }
-
