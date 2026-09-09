@@ -49,7 +49,6 @@ install_dependencies() {
         "mtr:mtr-tiny"
         "traceroute:traceroute"
         "whois:whois"
-        "dig:dnsutils"
         "bc:bc"
     )
 
