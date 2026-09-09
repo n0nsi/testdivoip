@@ -7,6 +7,11 @@ TEMP_DIR="${TEMP_DIR:-temp}"
 LOG_FILE=""
 AUDIT_LOG_FILE=""
 
+set_runtime_dirs() {
+    LOG_DIR="$1"
+    TEMP_DIR="$2"
+}
+
 init_logging() {
     umask 077
     mkdir -p "$LOG_DIR" "$TEMP_DIR" || return 1
@@ -113,7 +118,7 @@ is_float() {
 }
 
 get_missing_dependencies() {
-    local -a dependencies=(ping mtr traceroute whois awk sed grep bc find)
+    local -a dependencies=(ping mtr traceroute whois timeout awk sed grep bc find)
     local dependency missing=0
 
     for dependency in "${dependencies[@]}"; do
