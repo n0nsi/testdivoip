@@ -40,6 +40,28 @@ check_syntax() {
     fi
 }
 
+check_executable() {
+    local path="$1"
+    local display_path="${path#"$SCRIPT_DIR"/}"
+
+    if [ -x "$path" ]; then
+        ok "executable: $display_path"
+    else
+        error "expected executable file: $display_path"
+    fi
+}
+
+check_not_executable() {
+    local path="$1"
+    local display_path="${path#"$SCRIPT_DIR"/}"
+
+    if [ ! -x "$path" ]; then
+        ok "non-executable: $display_path"
+    else
+        error "unexpected executable bit: $display_path"
+    fi
+}
+
 main() {
     echo "TESTDIVOIP verification"
     echo ""
@@ -76,19 +98,24 @@ main() {
     done
 
     echo ""
+    echo "File modes"
+    check_executable "$SCRIPT_DIR/testdivoip.sh"
+    check_executable "$SCRIPT_DIR/install.sh"
+    check_executable "$SCRIPT_DIR/verify.sh"
+    check_not_executable "$SCRIPT_DIR/README.md"
+    check_not_executable "$SCRIPT_DIR/config/example.conf"
+    check_not_executable "$SCRIPT_DIR/tests/test_testdivoip.sh"
+    for module in "${modules[@]}"; do
+        check_not_executable "$SCRIPT_DIR/functions/$module"
+    done
+
+    echo ""
     echo "Runtime commands"
     local -a commands=(bash ping mtr traceroute whois timeout bc awk sed grep find)
     local command_name
     for command_name in "${commands[@]}"; do
         check_command "$command_name"
     done
-
-    echo ""
-    if [ -x "$SCRIPT_DIR/testdivoip.sh" ]; then
-        ok "testdivoip.sh is executable"
-    else
-        warn "testdivoip.sh is not executable in this checkout (bash testdivoip.sh still works)"
-    fi
 
     if [ "$errors" -eq 0 ]; then
         echo ""
