@@ -34,4 +34,4 @@ jobs:
           "$BIN_DIR/testdivoip" --help >/dev/null
 
       - name: Run ShellCheck
-        run: shellcheck testdivoip.sh install.sh verify.sh functions/*.sh tests/*.sh
+        run: shellcheck -x testdivoip.sh install.sh verify.sh functions/*.sh tests/*.sh
