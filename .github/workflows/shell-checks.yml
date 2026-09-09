@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install runtime tools
         run: |
@@ -22,5 +22,16 @@ jobs:
       - name: Run repository checks
         run: bash verify.sh
 
+      - name: Run regression tests
+        run: bash tests/test_testdivoip.sh
+
+      - name: Test installer
+        env:
+          INSTALL_PREFIX: ${{ runner.temp }}/testdivoip-install
+          BIN_DIR: ${{ runner.temp }}/testdivoip-bin
+        run: |
+          bash install.sh
+          "$BIN_DIR/testdivoip" --help >/dev/null
+
       - name: Run ShellCheck
-        run: shellcheck testdivoip.sh install.sh verify.sh functions/*.sh
+        run: shellcheck testdivoip.sh install.sh verify.sh functions/*.sh tests/*.sh
