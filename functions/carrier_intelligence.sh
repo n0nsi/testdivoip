@@ -1,346 +1,169 @@
 #!/bin/bash
 
 ################################################################################
-# CARRIER INTELLIGENCE & PATTERN DETECTION - carrier_intelligence.sh
-# LOGIC LAYER: Detect problematic carriers, international routes, transit issues
-# Returns: "risk_level|reason|recommendations" or status codes
-# NO stdout contamination (except data), errors to stderr
+# ROUTE CONTEXT - carrier_intelligence.sh
+# Keep carrier/ASN information as context. Do not turn a provider name into a verdict.
 ################################################################################
 
-################################################################################
-# CARRIER DATABASE - Known problematic carriers and their ASNs
-################################################################################
-
-# get_carrier_asns: Return ASN list for known problematic carriers
-# Input: carrier_name (cogent, level3, telia, etc.)
-# Output: Space-separated ASNs
+# Compatibility helpers kept for older callers. Static carrier blacklists are not used.
 get_carrier_asns() {
-    local carrier_name="$1"
-    
-    case "${carrier_name,,}" in
-        cogent|cogentco)
-            echo "174 36561"
-            ;;
-        level3|lga)
-            echo "3356 1"
-            ;;
-        telia)
-            echo "1299"
-            ;;
-        verizon|verio)
-            echo "701 702 AS701"
-            ;;
-        sprint|centurylink)
-            echo "1239"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    return 1
 }
 
-# is_problematic_carrier: Check if ASN is known to have peering/routing issues
-# Input: ASN (e.g., "174" or "AS174")
-# Output: "yes" or "no"
 is_problematic_carrier() {
-    local asn="$1"
-    
-    # Normalize ASN format
-    asn="${asn##AS}"
-    asn="${asn##as}"
-    
-    # These ASNs are known for:
-    # - Aggressive peering policies
-    # - Backbone congestion patterns
-    # - Rate-limiting on ICMP
-    # - Transit provider monopoly behavior
-    case "$asn" in
-        174|36561)   # Cogent
-            echo "yes"
-            ;;
-        3356|1)      # Level3
-            echo "yes"
-            ;;
-        1299)        # Telia
-            echo "yes"
-            ;;
-        701|702)     # Verizon
-            echo "yes"
-            ;;
-        1239)        # Sprint/CenturyLink
-            echo "yes"
-            ;;
-        *)
-            echo "no"
-            ;;
-    esac
-}
-
-# get_carrier_risk_profile: Return risk profile for ASN
-# Output: "criticality|historical_issues"
-get_carrier_risk_profile() {
-    local asn="$1"
-    
-    # Normalize ASN
-    asn="${asn##AS}"
-    asn="${asn##as}"
-    
-    case "$asn" in
-        174|36561)   # Cogent - HIGH RISK
-            echo "high|Known for backbone congestion, ICMP rate-limiting, aggressive peering. Brazil routes particularly problematic."
-            ;;
-        3356)        # Level3 - MEDIUM-HIGH RISK
-            echo "medium-high|Inconsistent peering, occasional transit saturation. Monitor closely for BRA routes."
-            ;;
-        701|702)     # Verizon - MEDIUM RISK
-            echo "medium|Stable but expensive peering costs drive poor routing decisions. May deprioritize non-customer traffic."
-            ;;
-        1299)        # Telia - MEDIUM RISK
-            echo "medium|European provider, less direct BRA peering. Higher latency variance expected."
-            ;;
-        *)
-            echo "low|No known issues for this ASN."
-            ;;
-    esac
-}
-
-################################################################################
-# ROUTE ANALYSIS - Detect international/problematic patterns
-################################################################################
-
-# detect_international_route: Check if route crosses international boundaries
-# Input: traceroute_output
-# Output: "yes" or "no"
-detect_international_route() {
-    local traceroute_output="$1"
-    
-    # Check for geographic indicators in hostnames
-    # US cities/regions
-    if echo "$traceroute_output" | grep -qiE '(\.us-|us-ewr|us-mnh|jfk|atl|mia|dca)\.'; then
-        # Check if also has Brazilian indicators
-        if echo "$traceroute_output" | grep -qiE '(\.br\.|ctbc|algar|taller|bct|gru1|sao|rj-)'; then
-            echo "yes"
-            return 0
-        fi
-    fi
-    
-    # Check for explicit international patterns
-    # HOP progression pattern: starts local/regional, then jumps to another continent
-    if echo "$traceroute_output" | grep -qE '(be5576|be5577|be3167|port-channel)' && \
-       echo "$traceroute_output" | grep -qE '(gru|jfk|mia|dca)'; then
-        echo "yes"
-        return 0
-    fi
-    
     echo "no"
 }
 
-# get_transit_providers: Extract all backbone transit providers from traceroute
-# Input: traceroute_output
-# Output: Space-separated provider names (cogent, level3, etc.)
-get_transit_providers() {
-    local traceroute_output="$1"
-    local providers=""
-    
-    # Detect by hostname pattern
-    if echo "$traceroute_output" | grep -qi 'cogentco\|atlas\.cogentco'; then
-        providers="$providers cogent"
-    fi
-    
-    if echo "$traceroute_output" | grep -qi 'level3\|lga\.'; then
-        providers="$providers level3"
-    fi
-    
-    if echo "$traceroute_output" | grep -qi 'telia'; then
-        providers="$providers telia"
-    fi
-    
-    if echo "$traceroute_output" | grep -qi 'verizon'; then
-        providers="$providers verizon"
-    fi
-    
-    echo "${providers}" | xargs
+get_carrier_risk_profile() {
+    echo "neutral|Carrier identity alone is not used as a quality signal."
 }
 
-# detect_backbone_congestion: Identify signs of backbone transit congestion/policing
-# Input: mtr_output traceroute_output
-# Output: "yes|no" and reason to stderr
+# Numeric traceroute output does not contain enough geography to prove that a path
+# crossed a country border. Keep this explicit instead of guessing from provider names.
+detect_international_route() {
+    echo "unknown"
+}
+
+# The current traceroute is numeric, so provider names are not inferred from hostnames.
+get_transit_providers() {
+    printf '%s\n' ""
+}
+
+# Compatibility name. This only reports an endpoint/path warning from MTR data;
+# it does not claim to have proven backbone congestion.
 detect_backbone_congestion() {
     local mtr_output="$1"
-    local traceroute_output="$2"
-    
-    # Pattern 1: Partial packet loss on specific hop (not end-to-end)
-    # This suggests rate-limiting on that hop, not real degradation
-    local hop_loss
-    hop_loss=$(echo "$mtr_output" | awk 'NR>1 && /[0-9.]+%/ {
-        loss=$NF
-        sub(/%.*/, "", loss)
-        if (loss > 30 && loss < 100) print loss
-    }' | head -1)
-    
-    if [ -n "$hop_loss" ] && (( $(echo "$hop_loss > 30 && $hop_loss < 100" | bc -l) )); then
+    local metrics mtr_loss mtr_avg mtr_best mtr_worst mtr_stddev
+
+    metrics=$(parse_mtr_raw "$mtr_output") || {
+        echo "no"
+        return 0
+    }
+
+    read -r mtr_loss mtr_avg mtr_best mtr_worst mtr_stddev <<< "$metrics"
+
+    if (( $(echo "${mtr_loss:-0} > 0.5" | bc -l 2>/dev/null || echo 0) )); then
         echo "yes"
-        echo "Partial packet loss ($hop_loss%) detected on backbone hop - likely ICMP rate-limiting, not end-to-end degradation." >&2
+        echo "Endpoint MTR shows ${mtr_loss}% packet loss." >&2
         return 0
     fi
-    
-    # Pattern 2: 100% loss followed by successful endpoint reach
-    # Indicates ICMP block on backbone but route exists
-    if echo "$traceroute_output" | grep -q '* * *' && \
-       ! echo "$traceroute_output" | tail -5 | grep -q '* * *'; then
+
+    if (( $(echo "${mtr_stddev:-0} > 30" | bc -l 2>/dev/null || echo 0) )); then
         echo "yes"
-        echo "Firewall/ICMP rate-limiting detected on backbone transit." >&2
+        echo "Endpoint MTR shows high latency variation (${mtr_stddev} ms StDev)." >&2
         return 0
     fi
-    
-    # Pattern 3: Latency spike at specific hop + high stddev
-    # Indicates queue buildup or congestion at that point
-    local latency_spike
-    latency_spike=$(echo "$mtr_output" | awk '
-        NR>1 && $NF ~ /[0-9]+/ {
-            latency=$(NF-1)
-            gsub(/[^0-9.]/, "", latency)
-            if (latency > 50 && latency < 1000) print latency
-        }
-    ' | head -1)
-    
-    if [ -n "$latency_spike" ] && (( $(echo "$latency_spike > 100" | bc -l 2>/dev/null || echo 0) )); then
-        echo "yes"
-        echo "Latency spike ($latency_spike ms) suggests temporary congestion on backbone." >&2
-        return 0
-    fi
-    
+
     echo "no"
 }
 
-################################################################################
-# RISK ASSESSMENT - Generate risk level based on patterns
-################################################################################
-
-# assess_route_risk: Comprehensive risk assessment based on all factors
-# Input: traceroute_output mtr_output latency loss hops
-# Output: "risk_level|confidence|reasons"
+# Output: risk_level|evidence_weight|reasons
+# evidence_weight is only an internal weight for how many measurable warning signals
+# were present. It is not a statistical confidence percentage.
 assess_route_risk() {
-    local traceroute_output="$1"
+    local _traceroute_output="$1"
     local mtr_output="$2"
     local latency="$3"
     local loss="$4"
     local hops="$5"
-    
+
     local risk_level="low"
-    local confidence=0
+    local evidence_weight=0
     local reasons=""
-    
-    # Check for international route
-    if [ "$(detect_international_route "$traceroute_output")" = "yes" ]; then
-        risk_level="medium"
-        ((confidence += 15))
-        reasons="${reasons}International route detected (+latency, +jitter risk). "
-    fi
-    
-    # Check for problematic carriers
-    local carriers
-    carriers=$(get_transit_providers "$traceroute_output")
-    
-    for carrier in $carriers; do
-        if [ "$(is_problematic_carrier "$carrier")" = "yes" ]; then
-            if [ "$risk_level" != "high" ]; then
-                risk_level="high"
-            fi
-            ((confidence += 25))
-            local profile
-            profile=$(get_carrier_risk_profile "$carrier" | cut -d'|' -f2)
-            reasons="${reasons}Problematic carrier detected ($carrier): $profile. "
-        fi
-    done
-    
-    # Check for backbone congestion patterns
-    if [ "$(detect_backbone_congestion "$mtr_output" "$traceroute_output")" = "yes" ]; then
-        if [ "$risk_level" != "high" ]; then
-            risk_level="medium-high"
-        fi
-        ((confidence += 20))
-        reasons="${reasons}Backbone transit congestion/policing detected (ICMP rate-limiting). "
-    fi
-    
-    # Check for excessive latency
-    if (( $(echo "$latency > 150" | bc -l 2>/dev/null || echo 0) )); then
-        if [ "$risk_level" = "low" ]; then
-            risk_level="medium"
-        fi
-        ((confidence += 10))
-        reasons="${reasons}High latency (${latency}ms) causes jitter sensitivity. "
-    fi
-    
-    # Check for packet loss > 0.5%
-    if (( $(echo "$loss > 0.5" | bc -l 2>/dev/null || echo 0) )); then
+
+    local metrics mtr_loss mtr_avg mtr_best mtr_worst mtr_stddev
+    metrics=$(parse_mtr_raw "$mtr_output" 2>/dev/null || true)
+    read -r mtr_loss mtr_avg mtr_best mtr_worst mtr_stddev <<< "$metrics"
+
+    mtr_loss="${mtr_loss:-0}"
+    mtr_stddev="${mtr_stddev:-0}"
+
+    if (( $(echo "$loss > 3" | bc -l 2>/dev/null || echo 0) )); then
         risk_level="high"
-        ((confidence += 15))
-        reasons="${reasons}Significant packet loss (${loss}%) detected. "
+        ((evidence_weight += 40))
+        reasons+="Ping shows ${loss}% packet loss. "
+    elif (( $(echo "$loss > 1" | bc -l 2>/dev/null || echo 0) )); then
+        risk_level="high"
+        ((evidence_weight += 30))
+        reasons+="Ping shows ${loss}% packet loss. "
+    elif (( $(echo "$loss > 0.5" | bc -l 2>/dev/null || echo 0) )); then
+        risk_level="medium-high"
+        ((evidence_weight += 20))
+        reasons+="Ping shows ${loss}% packet loss. "
+    elif (( $(echo "$loss > 0" | bc -l 2>/dev/null || echo 0) )); then
+        risk_level="medium"
+        ((evidence_weight += 10))
+        reasons+="Ping shows some packet loss (${loss}%). "
     fi
-    
-    # Check for excessive hops (>15 suggests poor routing)
-    if (( hops > 15 )); then
-        if [ "$risk_level" = "low" ]; then
-            risk_level="medium"
-        fi
-        ((confidence += 5))
-        reasons="${reasons}Excessive hop count ($hops) suggests suboptimal routing. "
+
+    if (( $(echo "$latency > 200" | bc -l 2>/dev/null || echo 0) )); then
+        risk_level="high"
+        ((evidence_weight += 30))
+        reasons+="RTT is high (${latency} ms). "
+    elif (( $(echo "$latency > 150" | bc -l 2>/dev/null || echo 0) )); then
+        [[ "$risk_level" == "low" || "$risk_level" == "medium" ]] && risk_level="medium-high"
+        ((evidence_weight += 20))
+        reasons+="RTT is elevated (${latency} ms). "
+    elif (( $(echo "$latency > 100" | bc -l 2>/dev/null || echo 0) )); then
+        [[ "$risk_level" == "low" ]] && risk_level="medium"
+        ((evidence_weight += 10))
+        reasons+="RTT is above 100 ms (${latency} ms). "
     fi
-    
-    # Cap confidence at 100
-    if (( confidence > 100 )); then
-        confidence=100
+
+    if (( $(echo "$mtr_stddev > 50" | bc -l 2>/dev/null || echo 0) )); then
+        risk_level="high"
+        ((evidence_weight += 30))
+        reasons+="MTR endpoint latency varies a lot (${mtr_stddev} ms StDev). "
+    elif (( $(echo "$mtr_stddev > 30" | bc -l 2>/dev/null || echo 0) )); then
+        [[ "$risk_level" == "low" || "$risk_level" == "medium" ]] && risk_level="medium-high"
+        ((evidence_weight += 20))
+        reasons+="MTR endpoint latency variation is elevated (${mtr_stddev} ms StDev). "
+    elif (( $(echo "$mtr_stddev > 20" | bc -l 2>/dev/null || echo 0) )); then
+        [[ "$risk_level" == "low" ]] && risk_level="medium"
+        ((evidence_weight += 10))
+        reasons+="MTR endpoint latency variation is noticeable (${mtr_stddev} ms StDev). "
     fi
-    
-    echo "${risk_level}|${confidence}|${reasons}"
+
+    # Hop count is context only and gets a small weight.
+    if is_number "$hops" && (( hops > 25 )); then
+        [[ "$risk_level" == "low" ]] && risk_level="medium"
+        ((evidence_weight += 5))
+        reasons+="The path has many hops ($hops); inspect the route before drawing a conclusion. "
+    fi
+
+    (( evidence_weight > 100 )) && evidence_weight=100
+
+    if [ -z "$reasons" ]; then
+        reasons="No obvious warning in the measurements collected by this run."
+    fi
+
+    echo "${risk_level}|${evidence_weight}|${reasons}"
 }
 
-################################################################################
-# RECOMMENDATION ENGINE
-################################################################################
-
-# get_provider_recommendation: Suggest alternative routing/provider
-# Input: risk_level carriers latency
-# Output: Recommendation text
 get_provider_recommendation() {
     local risk_level="$1"
-    local carriers="$2"
-    local latency="$3"
-    
+    local _providers="$2"
+    local _latency="$3"
+
     case "$risk_level" in
         high)
-            if echo "$carriers" | grep -q "cogent"; then
-                echo "CRITICAL RECOMMENDATION: Current Cogent routing unsuitable for VoIP. Consider provider migration to:"
-                echo "  • AWS São Paulo region (direct peering, lower latency)"
-                echo "  • Algar Telecom with AS3352 direct peering"
-                echo "  • Alternative carrier with better Brazil peering (Intelig, GVT preferred)"
-            else
-                echo "CRITICAL: Route quality severely degraded. Recommend immediate carrier evaluation."
-            fi
+            echo "Repeat the test during the problem window and compare another path or carrier before blaming one side. Check endpoint loss, MTR and traceroute together."
             ;;
         medium-high)
-            echo "WARNING: Route has elevated VoIP degradation risk. Recommend:"
-            echo "  • Monitor RTP quality metrics closely"
-            echo "  • Implement QoS policies (priority for SIP:5060, RTP:18000-20000)"
-            echo "  • Consider backup carrier for redundancy"
+            echo "Repeat the test at different times and compare the route with a known-good path. Look for persistent endpoint loss or latency variation."
             ;;
         medium)
-            echo "CAUTION: Route acceptable but suboptimal for VoIP. Consider:"
-            echo "  • Testing with backup route during peak hours"
-            echo "  • Tuning codec to lower bitrate (G.729A vs G.711)"
+            echo "Keep the result as a baseline and repeat the test if users report voice quality problems."
             ;;
         low)
-            echo "Route acceptable for VoIP. Continue monitoring."
+            echo "No obvious warning in this run. Keep the report for comparison with future tests."
+            ;;
+        *)
+            echo "Review the raw measurements before making a routing or carrier decision."
             ;;
     esac
 }
 
-################################################################################
-# EXPORT
-################################################################################
-
-# Export all functions to caller
 export -f get_carrier_asns
 export -f is_problematic_carrier
 export -f get_carrier_risk_profile
