@@ -112,27 +112,12 @@ is_float() {
     [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
 }
 
-is_valid_port() {
-    local port="$1"
-    is_number "$port" && (( port >= 1 && port <= 65535 ))
-}
-
-is_valid_hostname() {
-    local hostname="$1"
-    local regex='^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$'
-    [[ "$hostname" =~ $regex ]]
-}
-
-check_dependency() {
-    command -v "$1" >/dev/null 2>&1
-}
-
 get_missing_dependencies() {
-    local -a dependencies=(ping mtr traceroute whois dig awk sed grep bc find)
+    local -a dependencies=(ping mtr traceroute whois awk sed grep bc find)
     local dependency missing=0
 
     for dependency in "${dependencies[@]}"; do
-        if ! check_dependency "$dependency"; then
+        if ! command -v "$dependency" >/dev/null 2>&1; then
             printf '%s\n' "$dependency"
             missing=1
         fi
